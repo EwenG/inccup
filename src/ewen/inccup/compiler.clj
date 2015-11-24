@@ -1,29 +1,6 @@
 (ns ewen.inccup.compiler
-  (:use ewen.inccup.util)
+  (:require [ewen.inccup.util :refer [as-str to-str]])
   (:import [clojure.lang IPersistentVector ISeq Named]))
-
-(defn- xml-mode? []
-  (#{:xml :xhtml} *html-mode*))
-
-(defn- html-mode? []
-  (#{:html :xhtml} *html-mode*))
-
-(defn- xml-attribute [name value]
-  [(as-str name) (as-str value)])
-
-(defn- render-attribute [[name value]]
-  (cond
-    (true? value)
-      (if (xml-mode?)
-        (xml-attribute name name)
-        [(as-str name) ""])
-    (not value)
-      nil
-    :else
-      (xml-attribute name value)))
-
-(defn- render-attr-map [attrs]
-  (into {} (map render-attribute attrs)))
 
 (def ^{:doc "Regular expression that parses a CSS-style id and class from an element name."
        :private true}
@@ -35,7 +12,7 @@
   #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input" "keygen" "link"
     "meta" "param" "source" "track" "wbr"})
 
-(defn- container-tag?
+#_(defn- container-tag?
   "Returns true if the tag has content or is not a void tag. In non-HTML modes,
   all contentless tags are assumed to be void tags."
   [tag content]
@@ -51,11 +28,12 @@
   "Ensure an element vector is of the form [tag-name attrs content]."
   [[tag & content]]
   (when (not (or (keyword? tag) (symbol? tag) (string? tag)))
-    (throw (IllegalArgumentException. (str tag " is not a valid element name."))))
+    (throw (IllegalArgumentException.
+            (str tag " is not a valid element name."))))
   (let [[_ tag id class] (re-matches re-tag (as-str tag))
-        tag-attrs        {:id id
-                          :class (if class (.replace ^String class "." " "))}
-        map-attrs        (first content)]
+        tag-attrs {:id id
+                   :class (if class (.replace ^String class "." " "))}
+        map-attrs (first content)]
     (if (map? map-attrs)
       [tag (:key map-attrs)
        (merge-attributes tag-attrs map-attrs) (next content)]
@@ -65,7 +43,7 @@
   (render-html [this]
     "Turn a Clojure data type into a string of HTML."))
 
-(defn- render-element
+#_(defn- render-element
   "Render an element vector as a HTML element."
   [element]
   (let [[tag attrs content] (normalize-element element)
@@ -74,7 +52,7 @@
       (into [tag (render-attr-map attrs)] (render-html content))
       [tag (render-attr-map attrs) (render-html content)])))
 
-(extend-protocol HtmlRenderer
+#_(extend-protocol HtmlRenderer
   IPersistentVector
   (render-html [this]
     (render-element this))
@@ -98,13 +76,24 @@
       (and (seq? expr)
            (not= (first expr) `quote))))
 
+(defn- literal?
+  "True if x is a literal value that can be rendered as-is."
+  [x]
+  (and (not (unevaluated? x))
+       (or (not (or (vector? x) (map? x)))
+           (every? literal? x))))
+
 (defn compile-attr-map
   "Returns an unevaluated form that will render the supplied map as HTML
   attributes."
   [attrs]
-  (if (some unevaluated? (mapcat identity attrs))
-    `(#'render-attr-map ~attrs)
-    (render-attr-map attrs)))
+  (let [maybe-to-str (fn [x] (if (and (instance? Named x) (literal? x))
+                               (as-str x) x))
+        {static-attrs true dyn-attrs false}
+        (->> (map #(mapv maybe-to-str %) attrs)
+             (group-by literal?))]
+    `[~(cons 'js-obj (flatten static-attrs))
+      ~(cons 'js-obj (flatten dyn-attrs))]))
 
 (defn- form-name
   "Get the name of the supplied form."
@@ -143,13 +132,6 @@
   (if-let [hint (-> x meta :tag)]
     (isa? (eval hint) type)))
 
-(defn- literal?
-  "True if x is a literal value that can be rendered as-is."
-  [x]
-  (and (not (unevaluated? x))
-       (or (not (or (vector? x) (map? x)))
-           (every? literal? x))))
-
 (defn- not-implicit-map?
   "True if we can infer that x is not a map."
   [x]
@@ -183,23 +165,8 @@
 (defmethod compile-element ::all-literal
   [[tag attrs & content]]
   (let [[tag k attrs & content] (normalize-element [tag attrs])]
-    `((cond
-        ;;Tag and key matches -> reconciliate attributes
-        (ewen.inccup.core/tag-key-matches? ~tag ~k)
-        (ewen.inccup.core/reconciliate-attrs! (~'clj->js ~attrs))
-        ;; Tags don't match -> replace the node or create a new one
-        (not (ewen.inccup.core/tag-matches? ~tag))
-        (ewen.inccup.core/replace-node!
-         (ewen.inccup.core/new-node ~tag ~k (~'clj->js ~attrs)))
-        ;; Tags match -> reconciliate attributes
-        :else (ewen.inccup.core/reconciliate-attrs! (~'clj->js ~attrs))))))
-
-;; tag= key= -> comp attrs
-;; if key
-;;    find key
-;;      if tag!= -> error else -> comp attrs
-;; else if tag!= create node
-;; else comp attrs
+    `(ewen.inccup.core/reconciliate-node!
+      ~tag ~k ~@(compile-attr-map attrs))))
 
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content]]
@@ -210,7 +177,7 @@
   [[tag & content]]
   (compile-element (apply vector tag {} content)))
 
-(defmethod compile-element ::literal-tag
+#_(defmethod compile-element ::literal-tag
   [[tag attrs & content]]
   (let [[tag tag-attrs _] (normalize-element [tag])
         attrs-sym         (gensym "attrs")]
@@ -221,7 +188,7 @@
          [~tag ~(render-attr-map tag-attrs)
           ~@(compile-seq (cons attrs-sym content))]))))
 
-(defmethod compile-element :default
+#_(defmethod compile-element :default
   [element]
   `(#'render-element
      [~(first element)
@@ -242,8 +209,7 @@
                       (hint? expr Number) expr
                       (seq? expr) (compile-form expr)
                       :else `(#'render-html ~expr)))
-                  (interpose `((ewen.inccup.core/next-node!)))
-                  (apply concat))
+                  (interpose `(ewen.inccup.core/next-node!)))
            (ewen.inccup.core/up-node!))))
 
 (defmacro html

@@ -35,7 +35,7 @@
 
 (defn reconciliate-attrs! [new-attrs]
   (let [real-node (aget (or *node* #js {}) "real-node")
-        attrs (aget (or *node* #js {}) "attrs")
+        attrs (aget (or *node* #js {}) "dyn-attrs")
         attrs-keys (obj/getKeys attrs)
         new-attrs-keys (obj/getKeys new-attrs)]
     (doseq [k attrs-keys]
@@ -57,10 +57,10 @@
 (defn tag-matches? [new-tag]
   (= (aget (or *node* #js {}) "tag") new-tag))
 
-(defn new-node [tag key attrs]
+(defn new-node [tag key attrs dyn-attrs]
   (let [real-node (dom/createDom tag attrs)]
     #js {:real-node real-node
-         :tag tag :key key :attrs attrs
+         :tag tag :key key :dyn-attrs dyn-attrs
          :children #js [] :key-map #js {}}))
 
 (defn replace-node! [new-node]
@@ -76,6 +76,24 @@
           (dom/appendChild (aget parent "real-node")
                            (aget new-node "real-node"))))
     (set! *node* new-node)))
+
+(defn reconciliate-node! [tag k static-attrs dyn-attrs]
+  (cond
+    ;; Tags don't match -> replace the node or create a new one
+    (not (ewen.inccup.core/tag-matches? tag))
+    (do (obj/extend static-attrs dyn-attrs)
+        (ewen.inccup.core/replace-node!
+         ;;static-attrs have been mutated and now contains all attrs
+         (ewen.inccup.core/new-node tag k static-attrs dyn-attrs)))
+    ;; Tags match -> reconciliate attributes
+    :else (ewen.inccup.core/reconciliate-attrs! dyn-attrs)))
+
+;; tag= key= -> comp attrs
+;; if key
+;;    find key
+;;      if tag!= -> error else -> comp attrs
+;; else if tag!= create node
+;; else comp attrs
 
 (defn patch! [root vtree new-vtree]
   (binding [*node* #js {:real-node root
