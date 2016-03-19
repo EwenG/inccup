@@ -5,6 +5,8 @@
             [cljs.tagged-literals :as tags]
             [cljs.env :as env]))
 
+(def ^:dynamic *tracked-vars* nil)
+
 (defmulti emit* :op)
 
 (defmethod emit* :vector
@@ -26,7 +28,22 @@
   [{:keys [items]}] (into #{} (map emit* items)))
 
 (defmethod emit* :var
-  [{:keys [form name] :as ast}] (or form name))
+  [{:keys [info env form] :as ast}]
+  (let [var-name (:name info)]
+    (prn form)
+    (when (and (contains? *tracked-vars* form)
+               (not (contains? (:locals env) form)))
+      (set! *tracked-vars* (assoc *tracked-vars* form true)))
+    var-name))
+
+(comment
+
+  (binding [*tracked-vars* {'e false}]
+    (emit* (ana-api/analyze (ana-api/empty-env)
+                            '(let [e "e"]
+                               e)))
+    *tracked-vars*)
+  )
 
 (defmethod emit* :var-special
   [{{{name :name} :info} :var}] `(var ~name))
@@ -198,9 +215,6 @@
   (defn ast-show-only [ast keys]
     (assoc (select-keys ast keys)
            :children (mapv #(ast-show-only % keys) (:children ast))))
-  (alter-var-root #'clojure.core/*data-readers* assoc 'js identity)
-  (#'clojure.core/load-data-readers)
-  (set! *data-readers* (.getRawRoot #'*data-readers*))
 
   (emit*
    (ana-api/analyze
