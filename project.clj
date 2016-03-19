@@ -6,4 +6,5 @@
   :source-paths ["src"]
   :test-paths ["test"]
   :dependencies [[org.clojure/clojure "1.8.0"]
-                 [org.clojure/clojurescript "1.7.228"]])
+                 [org.clojure/clojurescript "1.7.228"]
+                 [ewen/hiccup "1.0.0"]])
