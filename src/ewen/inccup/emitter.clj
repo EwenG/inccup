@@ -37,7 +37,6 @@
     var-name))
 
 (comment
-
   (binding [*tracked-vars* {'e false}]
     (emit* (ana-api/analyze (ana-api/empty-env)
                             '(let [e "e"]
