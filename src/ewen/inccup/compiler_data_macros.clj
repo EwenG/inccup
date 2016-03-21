@@ -141,7 +141,6 @@
 (defn group-dynamic-forms [dynamic-forms]
   {:pre [(not (empty? dynamic-forms))]}
   (let [partitioned (partition-by (comp first :path) dynamic-forms)]
-    (prn partitioned)
     (for [forms partitioned]
       (if (= 1 (count forms))
         (first forms)
@@ -214,9 +213,8 @@
 (defn compile-data [content]
   (let [[static dynamic] (binding [*dynamic-forms* []]
                            [(compile-element content []) *dynamic-forms*])
-        _ (prn dynamic)
         cached-sym (gensym "cached")
-        update-expr (when dynamic (dynamic->update-expr dynamic))
+        update-expr (when dynamic (dynamic-forms->update-expr dynamic))
         ret `(let [~cached-sym (if comp/*cache*
                                  (get comp/*cache* ~*cache-counter*)
                                  ~static)
