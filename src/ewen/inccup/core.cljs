@@ -5,4 +5,7 @@
 (comment
   (require '[ewen.inccup.core :refer-macros [html]])
   (require '[cljs.pprint :refer [pprint] :refer-macros [pp]])
+
+  (let [x "e"]
+    (html [:e {} [:p {} x]]))
   )

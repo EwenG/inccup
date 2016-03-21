@@ -3,6 +3,7 @@
              :refer [compile-html compile-html*]]
             [ewen.inccup.compiler-data-macros
              :refer [compile-data]]
+            [ewen.inccup.emitter :as emitter :refer [*env* *tracked-vars*]]
             [ewen.inccup.util
              :refer [default-output-format *html-mode*
                      *is-top-level* *pre-compile* *output-format*]]))
@@ -26,7 +27,11 @@
         content (if (or mode pre-compile-opt output-format)
                   (first content) options)]
     (cond (not output-string?)
-          (compile-data content)
+          (binding [*env* (-> (update-in &env [:locals 'x]
+                                         assoc ::emitter/tracked? true)
+                              (update-in [:locals 'y]
+                                         assoc ::emitter/tracked? true))]
+            (compile-data content))
           (and pre-compile? mode)
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]

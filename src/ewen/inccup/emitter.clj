@@ -5,7 +5,8 @@
             [cljs.tagged-literals :as tags]
             [cljs.env :as env]))
 
-(def ^:dynamic *tracked-vars* nil)
+(def ^:dynamic *tracked-vars* #{})
+(def ^:dynamic *env* nil)
 
 (defmulti emit* :op)
 
@@ -30,10 +31,9 @@
 (defmethod emit* :var
   [{:keys [info env form] :as ast}]
   (let [var-name (:name info)]
-    (prn form)
-    (when (and (contains? *tracked-vars* form)
-               (not (contains? (:locals env) form)))
-      (set! *tracked-vars* (assoc *tracked-vars* form true)))
+    #_(prn (get-in (:locals env) [form]))
+    (when (get-in (:locals env) [form ::tracked?])
+      (set! *tracked-vars* (conj *tracked-vars* form)))
     var-name))
 
 (comment
@@ -205,6 +205,9 @@
   [{:keys [form] :as ast}]
   (throw (Exception. "js-value is not supported by inccup")))
 
+(defn track-vars [expr]
+  (emit* (ana-api/analyze (or *env* (ana-api/empty-env)) expr)))
+
 
 (comment
   (require '[cljs.compiler :as cljs-comp])
@@ -225,5 +228,8 @@
     '(let [e "e"]
        e)))
 
+  (get-in (ana-api/analyze (ana-api/empty-env)
+                           '(let [e "e"]
+                              e)) [:children 1 :children 0])
 
   )
