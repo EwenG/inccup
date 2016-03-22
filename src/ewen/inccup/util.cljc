@@ -12,11 +12,6 @@
 
 (def ^:dynamic *is-top-level* true)
 
-;; Pre compilation occurs during macro expansion. Thus it is only relevant
-;; on the :clj platform. One must use a side effectful macro in order to
-;; modify the root value
-#?(:clj (def ^:dynamic *pre-compile* true))
-
 ;; Used in the \"html\" macro and thus only relevant on the :clj platform.
 ;; One must use a side effectful macro in order to modify the root value
 #?(:clj (def ^:dynamic *output-format* nil))
@@ -197,3 +192,35 @@ equality of value. The sort order is not relevant."}
   cljs."
      [env]
      (boolean (:ns env))))
+
+;; Taken from tools.macro
+;; https://github.com/clojure/tools.macro
+#?(:clj
+   (defn name-with-attributes
+     "To be used in macro definitions.
+   Handles optional docstrings and attribute maps for a name to be defined
+   in a list of macro arguments. If the first macro argument is a string,
+   it is added as a docstring to name and removed from the macro argument
+   list. If afterwards the first macro argument is a map, its entries are
+   added to the name's metadata map and the map is removed from the
+   macro argument list. The return value is a vector containing the name
+   with its extended metadata map and the list of unprocessed macro
+   arguments."
+     [name macro-args]
+     (let [[docstring macro-args]
+           (if (string? (first macro-args))
+             [(first macro-args) (next macro-args)]
+             [nil macro-args])
+           [attr macro-args]
+           (if (map? (first macro-args))
+             [(first macro-args) (next macro-args)]
+             [{} macro-args])
+           attr
+           (if docstring
+             (assoc attr :doc docstring)
+             attr)
+           attr
+           (if (meta name)
+             (conj (meta name) attr)
+             attr)]
+       [(with-meta name attr) macro-args])))

@@ -1,6 +1,7 @@
 (ns ewen.inccup.compiler-data-macros
   (:require [ewen.inccup.compiler-data :as comp]
-            [ewen.inccup.emitter :refer [*tracked-vars* track-vars]]
+            [ewen.inccup.emitter :as emitter
+             :refer [*tracked-vars* track-vars]]
             [cljs.analyzer.api :refer [analyze empty-env]]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]))
@@ -10,15 +11,18 @@
 
 (defn dynamic-result [expr path]
   (when *dynamic-forms*
-    (binding [*tracked-vars* #{}]
-      (let [cljs-expanded (track-vars expr)]
-        (if (empty? *tracked-vars*)
+    (binding [*tracked-vars* *tracked-vars*]
+      (let [cljs-expanded (track-vars expr)
+            used-vars (keep #(when (:is-used %) (:symbol %))
+                            (vals *tracked-vars*))]
+        (if (empty? used-vars)
           cljs-expanded
-          (set! *dynamic-forms*
-                (conj *dynamic-forms*
-                      {:path path
-                       :var-deps *tracked-vars*
-                       :form cljs-expanded})))))))
+          (do (set! *dynamic-forms*
+                    (conj *dynamic-forms*
+                          {:path path
+                           :var-deps (set used-vars)
+                           :form cljs-expanded}))
+              nil))))))
 
 (defn- unevaluated?
   "True if the expression has not been evaluated."
@@ -115,13 +119,6 @@
       ;; compatible with update-in
       compiled)))
 
-#_(defn group-nested-paths [grouped-path
-                          {:keys [path tx nested-tx] :as dyn-element}]
-  (let [updated-path (conj grouped-path path)]
-    (if (or tx (not (= 1 (count nested-tx))))
-      [updated-path dyn-element]
-      (recur updated-path (first nested-tx)))))
-
 (defn compute-common-path [dynamic-forms]
   (let [var-deps (apply union (map :var-deps dynamic-forms))
         path-groups (->> (map :path dynamic-forms)
@@ -198,7 +195,7 @@
   )
 
 (defn extract-params [params]
-  (let [extracted (atom [])]
+  (let [extracted (atom #{})]
     (postwalk (fn [x]
                 (when (and (not= '& x) (symbol? x))
                   (swap! extracted conj x))
@@ -210,11 +207,14 @@
   (extract-params '[{:e r :as rr} y & others])
   )
 
-(defn compile-data [content]
-  (let [[static dynamic] (binding [*dynamic-forms* []]
+(defn compile-data* [content env]
+  (let [[static dynamic] (binding [emitter/*env* env
+                                   *dynamic-forms* []]
                            [(compile-element content []) *dynamic-forms*])
+        _ (prn static)
         cached-sym (gensym "cached")
-        update-expr (when dynamic (dynamic-forms->update-expr dynamic))
+        update-expr (when (not-empty dynamic)
+                      (dynamic-forms->update-expr dynamic))
         ret `(let [~cached-sym (if comp/*cache*
                                  (get comp/*cache* ~*cache-counter*)
                                  ~static)
@@ -225,9 +225,26 @@
                      (set! comp/*cache*
                            (assoc
                             comp/*cache* ~*cache-counter* ~cached-sym))))
-           ~cached-sym)]
+               ~cached-sym)]
     (when *cache-counter* (set! *cache-counter* (inc *cache-counter*)))
     ret))
+
+(defmacro compile-data
+  ([content] (compile-data* content &env))
+  ([content params]
+   (let [tracked-vars
+         (loop [tracked-vars {}
+                params params]
+           (if-let [param (first params)]
+             (do (assert (contains? (:locals &env) param))
+                 (recur (assoc tracked-vars param
+                               {:env (get (:locals &env) param)
+                                :is-used false
+                                :symbol param})
+                        (rest params)))
+             tracked-vars))]
+     (binding [*tracked-vars* tracked-vars]
+       (compile-data* content &env)))))
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])

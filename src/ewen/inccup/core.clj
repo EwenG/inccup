@@ -1,45 +1,54 @@
 (ns ewen.inccup.core
   (:require [ewen.inccup.compiler-string-macros
-             :refer [compile-html compile-html*]]
+             :refer [compile-html maybe-convert-raw-string]]
             [ewen.inccup.compiler-data-macros
-             :refer [compile-data]]
-            [ewen.inccup.emitter :as emitter :refer [*env* *tracked-vars*]]
+             :refer [compile-data extract-params]]
             [ewen.inccup.util
-             :refer [default-output-format *html-mode*
-                     *is-top-level* *pre-compile* *output-format*]]))
+             :refer [default-output-format name-with-attributes cljs-env?
+                     *html-mode* *output-format*]]))
 
-(defn maybe-convert-raw-string [compile-fn content]
-  `(let [out-str# (binding [*is-top-level* false]
-                    ~(apply compile-fn content))]
-     (if *is-top-level*
-       (str out-str#) out-str#)))
+(defn options-with-content [options-content env]
+  (let [[options content] (if (map? (first options-content))
+                              [(first options-content)
+                               (rest options-content)]
+                              [{} options-content])
+        mode (:mode options)
+        output-format (or (:output-format options)
+                          *output-format*
+                          (default-output-format env))]
+    (assert (= 1 (count content))
+            "Inccup must be given a single expression")
+    (assert (or (= :string output-format)
+                (and (cljs-env? env) (= :inccup output-format)))
+            "Invalid output format")
+    [{:mode mode :output-format output-format} (first content)]))
 
 (defmacro html
-  [options & content]
-  (let [mode (and (map? options) (:mode options))
-        pre-compile-opt (when (map? options) (:pre-compile options))
-        pre-compile? (if (nil? pre-compile-opt)
-                       *pre-compile* pre-compile-opt)
-        output-format (and (map? options) (:output-format options))
-        output-format (or output-format *output-format*)
-        output-string? (= :string
-                          (or output-format (default-output-format &env)))
-        content (if (or mode pre-compile-opt output-format)
-                  (first content) options)]
-    (cond (not output-string?)
-          (binding [*env* (-> (update-in &env [:locals 'x]
-                                         assoc ::emitter/tracked? true)
-                              (update-in [:locals 'y]
-                                         assoc ::emitter/tracked? true))]
-            (compile-data content))
-          (and pre-compile? mode)
+  [& options-content]
+  (let [[{:keys [mode output-format]} content] (options-with-content
+                                                options-content &env)]
+    (cond (= :inccup output-format)
+          `(compile-data ~content)
+          mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]
                ~(maybe-convert-raw-string compile-html content)))
-          pre-compile?
-          (maybe-convert-raw-string compile-html content)
-          mode
-          `(binding [*html-mode* (or ~mode *html-mode*)]
-             ~(maybe-convert-raw-string compile-html* content))
           :else
-          (maybe-convert-raw-string compile-html* content))))
+          (maybe-convert-raw-string compile-html content))))
+
+(defmacro defhtml
+  "Define a function, but wrap its output in an implicit html macro."
+  [name & meta-body]
+  (let [[name [args & options-content]] (name-with-attributes
+                                         name meta-body)
+        [{:keys [mode output-format]} content] (options-with-content
+                                                options-content &env)]
+    (cond (= :inccup output-format)
+          (let [params (extract-params args)]
+            `(defn ~name ~args (compile-data ~content ~params)))
+          mode
+          (binding [*html-mode* (or mode *html-mode*)]
+            `(binding [*html-mode* (or ~mode *html-mode*)]
+               ~(maybe-convert-raw-string compile-html content)))
+          :else
+          (maybe-convert-raw-string compile-html content))))

@@ -175,9 +175,8 @@
   ;;differentiate compiled strings from other strings.
   (collapse-strs `(raw-string ~@(compile-seq content))))
 
-(defn compile-html*
-  "Compile a sequence of data-structures into HTML without performing
-  any pre-compilation."
-  [& content]
-  `(raw-string ~@(for [expr content]
-                   `(comp/render-html ~expr))))
+(defn maybe-convert-raw-string [compile-fn content]
+  `(let [out-str# (binding [*is-top-level* false]
+                    ~(apply compile-fn content))]
+     (if *is-top-level*
+       (str out-str#) out-str#)))

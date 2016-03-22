@@ -31,9 +31,10 @@
 (defmethod emit* :var
   [{:keys [info env form] :as ast}]
   (let [var-name (:name info)]
-    #_(prn (get-in (:locals env) [form]))
-    (when (get-in (:locals env) [form ::tracked?])
-      (set! *tracked-vars* (conj *tracked-vars* form)))
+    (if (and (contains? *tracked-vars* form)
+             (identical? (get (:locals env) form)
+                         (get-in *tracked-vars* [form :env])))
+      (set! *tracked-vars* (assoc-in *tracked-vars* [form :is-used] true)))
     var-name))
 
 (comment
@@ -228,8 +229,17 @@
     '(let [e "e"]
        e)))
 
-  (get-in (ana-api/analyze (ana-api/empty-env)
+  (defmacro mm [] 'f)
+
+  (ast-show-only (ana-api/analyze (ana-api/empty-env)
                            '(let [e "e"]
-                              e)) [:children 1 :children 0])
+                              (mm))) [:op])
+
+  (get-in
+   (ana-api/analyze
+    (ana-api/empty-env)
+    '(fn [e]
+       (fn [e]
+         e))) [:children 0 :children 0 :children 0 :children 0])
 
   )
