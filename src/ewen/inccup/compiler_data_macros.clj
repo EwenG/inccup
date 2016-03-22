@@ -40,11 +40,19 @@
 
 (defn- form-name
   "Get the name of the supplied form."
-  [form]
+  [form path]
   (if (and (seq? form) (symbol? (first form)))
     (name (first form))))
 
 (declare compile-html)
+
+(defmulti compile-form
+  "Pre-compile certain standard forms, where possible."
+  {:private true}
+  form-name)
+
+(defmethod compile-form :default
+  [expr path] (dynamic-result expr path))
 
 (defn- not-hint?
   "True if x is not hinted to be the supplied type."
@@ -103,6 +111,8 @@
       [tag compiled-attrs (compile-seq content (conj path 2))]
       [tag compiled-attrs])))
 
+(declare compile-dispatch)
+
 (defn- compile-seq
   "Compile a sequence of data-structures into HTML."
   [content path]
@@ -110,14 +120,22 @@
          index 0
          compiled []]
     (if expr
-      (let [compiled-expr
-            (cond
-              (vector? expr) (compile-element expr (conj path index))
-              :else (dynamic-result expr (conj path index)))]
+      (let [compiled-expr (compile-dispatch expr (conj path index))]
         (recur rest-content (inc index) (conj compiled compiled-expr)))
       ;; Retun a vector instead of a seq because it must be
       ;; compatible with update-in
       compiled)))
+
+(defn- compile-dispatch [expr path]
+  (cond
+    (vector? expr) (compile-element expr path)
+    (string? expr) expr
+    (keyword? expr) expr
+    (literal? expr) expr
+    (hint? expr String) expr
+    (hint? expr Number) expr
+    (seq? expr) (compile-form expr path)
+    :else (dynamic-result expr path)))
 
 (defn compute-common-path [dynamic-forms]
   (let [var-deps (apply union (map :var-deps dynamic-forms))
@@ -175,10 +193,16 @@
     `(update-in ~path ~(dynamic-forms->update-expr sub-forms))))
 
 (defn dynamic-forms->update-expr [dynamic-forms]
-  {:pre [(not (empty? dynamic-forms))]}
-  (let [update-exprs (map dynamic-form->update-expr dynamic-forms)]
-    `(fn [form#]
-       (-> form# ~@update-exprs))))
+  (cond (empty? dynamic-forms) ;; only static
+        `(identity)
+        (= [] (:path (first dynamic-forms))) ;; only dynamic
+        (do
+          (assert (= 1 (count dynamic-forms)))
+          `(constantly ~(:form (first dynamic-forms))))
+        :else
+        (let [update-exprs (map dynamic-form->update-expr dynamic-forms)]
+          `(fn [form#]
+             (-> form# ~@update-exprs)))))
 
 (comment
   (dynamic-forms->update-expr
@@ -208,25 +232,24 @@
   )
 
 (defn compile-data* [content env]
-  (let [[static dynamic] (binding [emitter/*env* env
-                                   *dynamic-forms* []]
-                           [(compile-element content []) *dynamic-forms*])
-        _ (prn static)
+  (let [[static dynamic]
+        (binding [emitter/*env* env
+                  *dynamic-forms* []
+                  *cache-counter* (when *cache-counter*
+                                    (inc *cache-counter*))]
+          [(compile-dispatch content []) *dynamic-forms*])
         cached-sym (gensym "cached")
-        update-expr (when (not-empty dynamic)
-                      (dynamic-forms->update-expr dynamic))
+        update-expr (dynamic-forms->update-expr dynamic)
         ret `(let [~cached-sym (if comp/*cache*
                                  (get comp/*cache* ~*cache-counter*)
                                  ~static)
-                   ~@(when update-expr
-                       [cached-sym `(~update-expr ~cached-sym)])]
+                   ~cached-sym (~update-expr ~cached-sym)]
                ~(when *cache-counter*
                   `(when comp/*cache*
                      (set! comp/*cache*
                            (assoc
                             comp/*cache* ~*cache-counter* ~cached-sym))))
                ~cached-sym)]
-    (when *cache-counter* (set! *cache-counter* (inc *cache-counter*)))
     ret))
 
 (defmacro compile-data
@@ -243,7 +266,8 @@
                                 :symbol param})
                         (rest params)))
              tracked-vars))]
-     (binding [*tracked-vars* tracked-vars]
+     (binding [*tracked-vars* tracked-vars
+               *cache-counter* 0]
        (compile-data* content &env)))))
 
 (comment
