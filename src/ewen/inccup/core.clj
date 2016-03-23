@@ -44,8 +44,11 @@
         [{:keys [mode output-format]} content] (options-with-content
                                                 options-content &env)]
     (cond (= :inccup output-format)
-          (let [params (extract-params args)]
-            `(defn ~name ~args (compile-data ~content ~params)))
+          (let [params (extract-params args)
+                cache-sym (gensym "cache")]
+            `(let [~cache-sym (atom {})]
+               (defn ~name ~args
+                 (compile-data ~content ~params ~cache-sym))))
           mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]

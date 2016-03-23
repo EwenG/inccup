@@ -6,6 +6,7 @@
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]))
 
+(def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-counter* nil)
 (def ^:dynamic *dynamic-forms* nil)
 
@@ -194,7 +195,7 @@
 
 (defn dynamic-forms->update-expr [dynamic-forms]
   (cond (empty? dynamic-forms) ;; only static
-        `(identity)
+        `identity
         (= [] (:path (first dynamic-forms))) ;; only dynamic
         (do
           (assert (= 1 (count dynamic-forms)))
@@ -238,23 +239,20 @@
                   *cache-counter* (when *cache-counter*
                                     (inc *cache-counter*))]
           [(compile-dispatch content []) *dynamic-forms*])
-        cached-sym (gensym "cached")
         update-expr (dynamic-forms->update-expr dynamic)
-        ret `(let [~cached-sym (if comp/*cache*
-                                 (get comp/*cache* ~*cache-counter*)
-                                 ~static)
-                   ~cached-sym (~update-expr ~cached-sym)]
-               ~(when *cache-counter*
-                  `(when comp/*cache*
-                     (set! comp/*cache*
-                           (assoc
-                            comp/*cache* ~*cache-counter* ~cached-sym))))
-               ~cached-sym)]
-    ret))
+        cached-sym (gensym "cached")]
+    `(let [~'_ (.log js/console (str (get @~*cache-sym* ~*cache-counter*)))
+           ~cached-sym (or (get @~*cache-sym* ~*cache-counter*) ~static)
+           ~cached-sym (~update-expr ~cached-sym)]
+       ~(when *cache-counter*
+          `(when ~*cache-sym*
+             (swap! ~*cache-sym*
+                    assoc ~*cache-counter* ~cached-sym)))
+       ~cached-sym)))
 
 (defmacro compile-data
   ([content] (compile-data* content &env))
-  ([content params]
+  ([content params cache-sym]
    (let [tracked-vars
          (loop [tracked-vars {}
                 params params]
@@ -267,7 +265,8 @@
                         (rest params)))
              tracked-vars))]
      (binding [*tracked-vars* tracked-vars
-               *cache-counter* 0]
+               *cache-counter* 0
+               *cache-sym* cache-sym]
        (compile-data* content &env)))))
 
 (comment
