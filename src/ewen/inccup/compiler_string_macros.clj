@@ -170,13 +170,13 @@
 
 (defn compile-html
   "Pre-compile data structures into HTML where possible."
-  [& content]
+  [content]
   ;;Wrap the result in a RawString object in order to be able to
   ;;differentiate compiled strings from other strings.
-  (collapse-strs `(raw-string ~@(compile-seq content))))
+  (collapse-strs `(raw-string ~@(compile-seq (list content)))))
 
 (defn maybe-convert-raw-string [compile-fn content]
   `(let [out-str# (binding [*is-top-level* false]
-                    ~(apply compile-fn content))]
+                    ~(compile-fn content))]
      (if *is-top-level*
        (str out-str#) out-str#)))

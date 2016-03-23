@@ -52,6 +52,8 @@
           mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]
-               ~(maybe-convert-raw-string compile-html content)))
+               (defn ~name ~args
+                 ~(maybe-convert-raw-string compile-html content))))
           :else
-          (maybe-convert-raw-string compile-html content))))
+          `(defn ~name ~args
+             ~(maybe-convert-raw-string compile-html content)))))
