@@ -241,8 +241,7 @@
           [(compile-dispatch content []) *dynamic-forms*])
         update-expr (dynamic-forms->update-expr dynamic)
         cached-sym (gensym "cached")]
-    `(let [~'_ (.log js/console (str (get @~*cache-sym* ~*cache-counter*)))
-           ~cached-sym (or (get @~*cache-sym* ~*cache-counter*) ~static)
+    `(let [~cached-sym (or (get @~*cache-sym* ~*cache-counter*) ~static)
            ~cached-sym (~update-expr ~cached-sym)]
        ~(when *cache-counter*
           `(when ~*cache-sym*
