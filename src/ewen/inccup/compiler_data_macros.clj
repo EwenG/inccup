@@ -8,6 +8,7 @@
 
 (def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-counter* nil)
+(def ^:dynamic *params-changed-sym* nil)
 (def ^:dynamic *dynamic-forms* nil)
 
 (defn dynamic-result [expr path]
@@ -109,23 +110,23 @@
   [[tag attrs & content] path]
   (let [compiled-attrs (compile-attr-map attrs (conj path 1))]
     (if (#'comp/container-tag? tag content)
-      [tag compiled-attrs (compile-seq content (conj path 2))]
+      (into [tag compiled-attrs] (compile-seq content path 2))
       [tag compiled-attrs])))
 
 (declare compile-dispatch)
 
 (defn- compile-seq
   "Compile a sequence of data-structures into HTML."
-  [content path]
-  (loop [[expr & rest-content] content
-         index 0
-         compiled []]
-    (if expr
-      (let [compiled-expr (compile-dispatch expr (conj path index))]
-        (recur rest-content (inc index) (conj compiled compiled-expr)))
-      ;; Retun a vector instead of a seq because it must be
-      ;; compatible with update-in
-      compiled)))
+  ([content path]
+   (compile-seq content path 0))
+  ([content path index-init]
+   (loop [[expr & rest-content] content
+          index index-init
+          compiled []]
+     (if expr
+       (let [compiled-expr (compile-dispatch expr (conj path index))]
+         (recur rest-content (inc index) (conj compiled compiled-expr)))
+       compiled))))
 
 (defn- compile-dispatch [expr path]
   (cond
@@ -185,13 +186,24 @@
 
 (declare dynamic-forms->update-expr)
 
+(defn var-deps->predicate [var-deps]
+  (cond (empty? var-deps) false
+        (nil? *params-changed-sym*) true
+        :else (let [preds (doall
+                           (map #(get *params-changed-sym* %) var-deps))]
+                (if (= 1 (count preds))
+                  (first preds)
+                  `(or ~@preds)))))
+
 (defn dynamic-form->update-expr [{:keys [path var-deps form sub-forms]}]
   {:pre [(or (and form (nil? sub-forms))
              (and (nil? form) sub-forms))
          (not (empty? path))]}
   (if form
-    `(update-in ~path (constantly ~form))
-    `(update-in ~path ~(dynamic-forms->update-expr sub-forms))))
+    `(~(var-deps->predicate var-deps)
+      (update-in ~path (constantly ~form)))
+    `(~(var-deps->predicate var-deps)
+      (update-in ~path ~(dynamic-forms->update-expr sub-forms)))))
 
 (defn dynamic-forms->update-expr [dynamic-forms]
   (cond (empty? dynamic-forms) ;; only static
@@ -201,22 +213,23 @@
           (assert (= 1 (count dynamic-forms)))
           `(constantly ~(:form (first dynamic-forms))))
         :else
-        (let [update-exprs (map dynamic-form->update-expr dynamic-forms)]
+        (let [update-exprs (mapcat dynamic-form->update-expr dynamic-forms)]
           `(fn [form#]
-             (-> form# ~@update-exprs)))))
+             (cond-> form# ~@update-exprs)))))
 
 (comment
-  (dynamic-forms->update-expr
-   '({:path [0 1] :var-deps #{x} :form x}
-     {:path [2 0]
-      :var-deps #{x y z}
-      :sub-forms
-      ({:path [0] :var-deps #{x} :form x}
-       {:path [1 0]
+  (binding [*params-changed-sym* {'x 'x123 'y 'y234 'z 'z456}]
+    (dynamic-forms->update-expr
+     '({:path [0 1] :var-deps #{x} :form x}
+       {:path [2 0]
         :var-deps #{x y z}
         :sub-forms
-        ({:path [0] :var-deps #{x y} :form y}
-         {:path [1] :var-deps #{z} :form z})})}))
+        ({:path [0] :var-deps #{x} :form x}
+         {:path [1 0]
+          :var-deps #{x y z}
+          :sub-forms
+          ({:path [0] :var-deps #{x y} :form y}
+           {:path [1] :var-deps #{z} :form z})})})))
   )
 
 (defn extract-params [params]
@@ -249,10 +262,21 @@
                     assoc ~*cache-counter* ~cached-sym)))
        ~cached-sym)))
 
+(defn with-params-changed [params params-changed-sym cache-sym & body]
+  (let [changed-bindings
+        (mapcat (fn [param]
+                  [(get params-changed-sym param)
+                   `(or (not (:params @~cache-sym))
+                        (not= ~param (get (:params @~cache-sym) '~param)))])
+                params)]
+    `(let ~(vec changed-bindings) ~@body)))
+
 (defmacro compile-data
   ([content] (compile-data* content &env))
   ([content params cache-sym]
-   (let [tracked-vars
+   (let [params-with-sym (interleave (map #(list 'quote %) params) params)
+         params-changed-sym (zipmap params (map #(gensym (name %)) params))
+         tracked-vars
          (loop [tracked-vars {}
                 params params]
            (if-let [param (first params)]
@@ -264,9 +288,13 @@
                         (rest params)))
              tracked-vars))]
      (binding [*tracked-vars* tracked-vars
+               *params-changed-sym* params-changed-sym
                *cache-counter* 0
                *cache-sym* cache-sym]
-       (compile-data* content &env)))))
+       (with-params-changed params params-changed-sym cache-sym
+         `(swap! ~*cache-sym* assoc :params
+                 ~(conj params-with-sym `hash-map))
+         (compile-data* content &env))))))
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])
