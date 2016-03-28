@@ -2,14 +2,17 @@
 
 (def ^:dynamic *cache* nil)
 
-(def ^{:doc "A list of elements that must be rendered without a closing
-tag."
-       :private true}
-  void-tags
-  #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input" "keygen"
-    "link" "meta" "param" "source" "track" "wbr"})
+(defn unevaluated?
+  "True if the expression has not been evaluated."
+  [expr]
+  (or (symbol? expr)
+      (and (seq? expr)
+           (not= (first expr) `quote))))
 
-(defn- container-tag?
-  "Returns true if the tag has content or is not a void tag."
-  [tag content]
-  (or content (not (void-tags tag))))
+(defn merge-attributes [attrs1 {:keys [id] :as attrs2}]
+  (let [merged-attrs (merge-with
+                      #(cond (nil? %1) %2
+                             (unevaluated? %2) `(str ~%1 " " ~%2)
+                             :else (str %1 " " %2))
+                      attrs1 attrs2)]
+    (if id (assoc merged-attrs :id id) merged-attrs)))

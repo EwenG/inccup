@@ -103,7 +103,10 @@
                 (partition 2))))))
 
 (defmethod emit* :js
-  [{:keys [form] :as ast}] form)
+  [{:keys [code form args] :as ast}]
+  (if code
+    `(~'js* ~code)
+    `(~'js* ~@(conj (doall (map emit* args)) (second form)))))
 
 (defmethod emit* :if
   [{:keys [test then else] :as ast}]
@@ -207,7 +210,12 @@
   (throw (Exception. "js-value is not supported by inccup")))
 
 (defn track-vars [expr]
-  (emit* (ana-api/analyze (or *env* (ana-api/empty-env)) expr)))
+  (binding [*tracked-vars* *tracked-vars*]
+    (let [cljs-expanded (-> (or *env* (ana-api/empty-env))
+                            (ana-api/analyze expr) emit*)
+          used-vars (keep #(when (:is-used %) (:symbol %))
+                          (vals *tracked-vars*))]
+      [cljs-expanded (set used-vars)])))
 
 
 (comment
@@ -241,5 +249,18 @@
     '(fn [e]
        (fn [e]
          e))) [:children 0 :children 0 :children 0 :children 0])
+
+  (emit* (ana-api/analyze
+                  (ana-api/empty-env)
+                  '(js*
+                    "[cljs.core.str(~{}),cljs.core.str(~{}),cljs.core.str(~{})].join('')"
+                    "a"
+                    " "
+                    x)))
+
+  (:segs (ana-api/analyze
+          (ana-api/empty-env)
+          '(str "e" "f")))
+
 
   )

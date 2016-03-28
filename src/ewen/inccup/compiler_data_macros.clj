@@ -11,38 +11,95 @@
 (def ^:dynamic *params-changed-sym* nil)
 (def ^:dynamic *dynamic-forms* nil)
 
-(defn dynamic-result [expr path]
-  (when *dynamic-forms*
-    (binding [*tracked-vars* *tracked-vars*]
-      (let [cljs-expanded (track-vars expr)
-            used-vars (keep #(when (:is-used %) (:symbol %))
-                            (vals *tracked-vars*))]
-        (if (empty? used-vars)
-          cljs-expanded
-          (do (set! *dynamic-forms*
-                    (conj *dynamic-forms*
-                          {:path path
-                           :var-deps (set used-vars)
-                           :form cljs-expanded}))
-              nil))))))
+(defn update-dynamic-forms
+  ([expr path used-vars]
+   (update-dynamic-forms expr path used-vars nil))
+  ([expr path used-vars predicate]
+   (when *dynamic-forms*
+     (let [{prev-path :path
+            prev-var-deps :var-deps
+            prev-form :form
+            prev-predicate :predicates} (peek *dynamic-forms*)]
+       (if (= path prev-path)
+         (set! *dynamic-forms*
+               (conj (pop *dynamic-forms*)
+                     {:path path
+                      :var-deps (union used-vars prev-var-deps)
+                      :form (comp expr prev-form)
+                      :predicates (union ~predicate ~prev-predicate)}))
+         (set! *dynamic-forms*
+               (conj *dynamic-forms*
+                     {:path path
+                      :var-deps used-vars
+                      :form expr
+                      :predicates (if predicate #{predicate} nil)})))))))
 
-(defn- unevaluated?
-  "True if the expression has not been evaluated."
-  [expr]
-  (or (symbol? expr)
-      (and (seq? expr)
-           (not= (first expr) `quote))))
+(defn compile-dynamic-expr [expr path]
+  (let [[expr used-vars] (track-vars expr)
+        expr `(constantly ~expr)]
+    (update-dynamic-forms expr path used-vars)
+    (if (empty? used-vars) expr nil)))
+
+(def ^{:doc "Regular expression that parses a CSS-style id and class from
+an element name."
+       :private true}
+  re-tag #"([^\s\.#]+)(?:#([^\s\.#]+))?(?:\.([^\s#]+))?")
+
+(def ^{:doc "A list of elements that must be rendered without a closing
+tag."
+       :private true}
+  void-tags
+  #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input" "keygen"
+    "link" "meta" "param" "source" "track" "wbr"})
+
+(defn- container-tag?
+  "Returns true if the tag has content or is not a void tag."
+  [tag content]
+  (or content (not (void-tags tag))))
+
+(defn normalize-element
+  "Ensure an element vector is of the form [tag-name attrs content]."
+  [[tag & content]]
+  (when (not (or (keyword? tag) (symbol? tag) (string? tag)))
+    (throw (IllegalArgumentException.
+            (str tag " is not a valid element name."))))
+  (let [[_ tag id class] (re-matches re-tag (name tag))
+        tag-attrs        (cond-> {}
+                           id (assoc :id id)
+                           class (assoc
+                                  :class
+                                  (if class
+                                    (.replace ^String class "." " "))))
+        map-attrs        (first content)]
+    (if (map? map-attrs)
+      [tag (comp/merge-attributes tag-attrs map-attrs) (next content)]
+      [tag tag-attrs content])))
 
 (defn compile-attr-map
   "Returns an unevaluated form that will render the supplied map as HTML
   attributes."
   [attrs path]
-  (if (some unevaluated? (mapcat identity attrs))
-    (dynamic-result attrs path) attrs))
+  (if (some comp/unevaluated? (mapcat identity attrs))
+    (compile-dynamic-expr attrs path)
+    attrs))
+
+(defn maybe-attr-map
+  ([attrs attr-path]
+   (maybe-attr-map attrs attr-path nil))
+  ([attrs attr-path path]
+   {:pred [(not (some comp/unevaluated? (mapcat identity attrs)))]}
+   (when attrs
+     (let [[expr used-vars] (track-vars attrs)
+           attr-form `#(comp/merge-attributes % ~expr)
+           form (when path `(constantly ~expr))]
+       (update-dynamic-forms attr-form attr-path used-vars `(map? ~expr))
+       (when expr (update-dynamic-forms
+                   form path used-vars `(not (map? ~expr))))
+       nil))))
 
 (defn- form-name
   "Get the name of the supplied form."
-  [form path]
+  [form]
   (if (and (seq? form) (symbol? (first form)))
     (name (first form))))
 
@@ -54,7 +111,7 @@
   form-name)
 
 (defmethod compile-form :default
-  [expr path] (dynamic-result expr path))
+  [expr path] (compile-dynamic-expr expr path))
 
 (defn- not-hint?
   "True if x is not hinted to be the supplied type."
@@ -71,7 +128,7 @@
 (defn- literal?
   "True if x is a literal value that can be rendered as-is."
   [x]
-  (and (not (unevaluated? x))
+  (and (not (comp/unevaluated? x))
        (or (not (or (vector? x) (map? x)))
            (every? literal? x))))
 
@@ -79,7 +136,7 @@
   "True if we can infer that x is not a map."
   [x]
   (or (= (form-name x) "for")
-      (not (unevaluated? x))
+      (not (comp/unevaluated? x))
       (not-hint? x java.util.Map)))
 
 (defn- element-compile-strategy
@@ -108,10 +165,27 @@
 
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content] path]
-  (let [compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (if (#'comp/container-tag? tag content)
+  (let [[tag attrs _] (normalize-element [tag attrs])
+        compiled-attrs (compile-attr-map attrs (conj path 1))]
+    (if (container-tag? tag content)
       (into [tag compiled-attrs] (compile-seq content path 2))
       [tag compiled-attrs])))
+
+(defmethod compile-element ::literal-tag-and-no-attributes
+  [[tag & content] path]
+  (compile-element (apply vector tag {} content) path))
+
+(defmethod compile-element ::literal-tag
+  [[tag attrs & content :as element] path]
+  (let [[tag tag-attrs [first-content & rest-content]]
+        (normalize-element element)]
+    (if (container-tag? tag content)
+      (do
+        (maybe-attr-map first-content (conj path 1) (conj path 2))
+        (into [tag tag-attrs nil] (compile-seq rest-content path 3)))
+      (do
+        (maybe-attr-map first-content (conj path 1))
+        (into [tag tag-attrs])))))
 
 (declare compile-dispatch)
 
@@ -134,22 +208,22 @@
     (string? expr) expr
     (keyword? expr) expr
     (literal? expr) expr
-    (hint? expr String) expr
-    (hint? expr Number) expr
     (seq? expr) (compile-form expr path)
-    :else (dynamic-result expr path)))
+    :else (compile-dynamic-expr expr path)))
 
 (defn compute-common-path [dynamic-forms]
   (let [var-deps (apply union (map :var-deps dynamic-forms))
+        predicates (apply union (map :predicates dynamic-forms))
         path-groups (->> (map :path dynamic-forms)
                          (apply interleave)
-                         (partition (count dynamic-forms)))]
-    [(loop [[path-group & rest-path-groups] path-groups
-            common-path []]
-       (if (or (nil? path-group) (not (apply = path-group)))
-         common-path
-         (recur rest-path-groups (conj common-path (first path-group)))))
-     var-deps]))
+                         (partition (count dynamic-forms)))
+        common-path (loop [[path-group & rest-path-groups] path-groups
+                           common-path []]
+                      (if (or (nil? path-group) (not (apply = path-group)))
+                        common-path
+                        (recur rest-path-groups
+                               (conj common-path (first path-group)))))]
+    [common-path var-deps predicates]))
 
 (defn remove-from-path [n form]
   {:post [(-> (:path %) empty? not)]}
@@ -161,48 +235,85 @@
     (for [forms partitioned]
       (if (= 1 (count forms))
         (first forms)
-        (let [[common-path var-deps] (compute-common-path forms)
+        (let [[common-path var-deps predicates] (compute-common-path forms)
               n (count common-path)
               updated-forms (map (partial remove-from-path n) forms)]
-          {:path common-path :var-deps var-deps
+          {:path common-path :var-deps var-deps :predicates predicates
            :sub-forms (group-dynamic-forms updated-forms)})))))
 
 (comment
-  (compute-common-path [{:path [2 0 0] :var-deps #{1}}
-                {:path [2 0 1 0 0] :var-deps #{1 2}}
-                        {:path [2 0 1 0 1]}])
+  (compute-common-path [{:path [2 0 0]
+                         :var-deps #{1}
+                         :predicates #{'a}}
+                        {:path [2 0 1 0 0]
+                         :var-deps #{1 2}
+                         :predicates #{'a 'b 'c}}
+                        {:path [2 0 1 0 1]
+                         :var-deps #{1 2}
+                         :predicates nil}])
 
-  (group-dynamic-forms '[{:path [0 1] :var-deps #{x} :form x}
-                         {:path [2 0 0] :var-deps #{x} :form x}
-                         {:path [2 0 1 0 0] :var-deps #{x y} :form y}
-                         {:path [2 0 1 0 1] :var-deps #{z} :form z}])
+  (group-dynamic-forms '[{:path [0 1]
+                          :var-deps #{x}
+                          :form (constantly x)
+                          :predicates #{'a}}
+                         {:path [2 0 0]
+                          :var-deps #{x}
+                          :form (constantly x)
+                          :predicates #{'a 'b}}
+                         {:path [2 0 1 0 0]
+                          :var-deps #{x y}
+                          :form #(update-in % (constantly y))
+                          :predicates #{}}
+                         {:path [2 0 1 0 1]
+                          :var-deps #{z}
+                          :form (constantly z)
+                          :predicates #{'b 'c}}])
 
   ;; Should throw an error
-  (group-dynamic-forms '[{:path [0 1] :var-deps #{x} :form x}
-                         {:path [2 0 1] :var-deps #{x} :form x}
-                         {:path [2 0 1 0 0] :var-deps #{x y} :form y}
-                         {:path [2 0 1 0 1] :var-deps #{z} :form z}])
+  (group-dynamic-forms '[{:path [0 1] :var-deps #{x} :form (constantly x)}
+                         {:path [2 0 1] :var-deps #{x} :form (constantly x)}
+                         {:path [2 0 1 0 0]
+                          :var-deps #{x y}
+                          :form (constantly y)}
+                         {:path [2 0 1 0 1]
+                          :var-deps #{z}
+                          :form (constantly z)}])
   )
 
 (declare dynamic-forms->update-expr)
 
+(defn format-predicates [predicates]
+  (cond (empty? predicates) true
+        (= 1 (count predicates)) (first predicates)
+        :else `(and ~@predicates)))
+
 (defn var-deps->predicate [var-deps]
-  (cond (empty? var-deps) false
-        (nil? *params-changed-sym*) true
+  (cond (nil? *params-changed-sym*) true
+        (empty? var-deps) false
         :else (let [preds (doall
                            (map #(get *params-changed-sym* %) var-deps))]
                 (if (= 1 (count preds))
                   (first preds)
                   `(or ~@preds)))))
 
-(defn dynamic-form->update-expr [{:keys [path var-deps form sub-forms]}]
+(defn dynamic-form->predicate [var-deps predicates]
+  (let [predicates (format-predicates predicates)
+        var-deps-p (var-deps->predicate var-deps)]
+    (cond (true? var-deps-p) predicates
+          (true? predicates) var-deps-p
+          (false? var-deps-p) false
+          (false? predicates) false
+          :else `(and ~var-deps-p ~predicates))))
+
+(defn dynamic-form->update-expr [{:keys [path var-deps form
+                                         sub-forms predicates]}]
   {:pre [(or (and form (nil? sub-forms))
              (and (nil? form) sub-forms))
          (not (empty? path))]}
   (if form
-    `(~(var-deps->predicate var-deps)
-      (update-in ~path (constantly ~form)))
-    `(~(var-deps->predicate var-deps)
+    `(~(dynamic-form->predicate var-deps predicates)
+      (update-in ~path ~form))
+    `(~(dynamic-form->predicate var-deps predicates)
       (update-in ~path ~(dynamic-forms->update-expr sub-forms)))))
 
 (defn dynamic-forms->update-expr [dynamic-forms]
@@ -223,12 +334,14 @@
      '({:path [0 1] :var-deps #{x} :form x}
        {:path [2 0]
         :var-deps #{x y z}
+        :predicates #{'ppp1 'ppp2 'ppp3}
         :sub-forms
-        ({:path [0] :var-deps #{x} :form x}
+        ({:path [0] :var-deps #{x} :predicates #{'ppp1} :form x}
          {:path [1 0]
           :var-deps #{x y z}
+          :predicates #{'ppp2 'ppp3}
           :sub-forms
-          ({:path [0] :var-deps #{x y} :form y}
+          ({:path [0] :var-deps #{x y} :predicates #{'ppp2 'ppp3} :form y}
            {:path [1] :var-deps #{z} :form z})})})))
   )
 
