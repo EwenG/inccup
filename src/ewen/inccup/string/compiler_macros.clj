@@ -1,7 +1,7 @@
-(ns ewen.inccup.compiler-string-macros
+(ns ewen.inccup.string.compiler-macros
   "Internal functions for compilation."
   (:require [ewen.inccup.util :refer :all]
-            [ewen.inccup.compiler-string :as comp]))
+            [ewen.inccup.string.compiler :as comp]))
 
 (defn- unevaluated?
   "True if the expression has not been evaluated."

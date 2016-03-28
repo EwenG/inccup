@@ -1,6 +1,6 @@
-(ns ewen.inccup.compiler-data-macros
-  (:require [ewen.inccup.compiler-data :as comp]
-            [ewen.inccup.emitter :as emitter
+(ns ewen.inccup.incremental.compiler-macros
+  (:require [ewen.inccup.incremental.compiler :as comp]
+            [ewen.inccup.incremental.emitter :as emitter
              :refer [*tracked-vars* track-vars]]
             [cljs.analyzer.api :refer [analyze empty-env]]
             [clojure.walk :refer [postwalk]]
@@ -358,7 +358,7 @@ tag."
   (extract-params '[{:e r :as rr} y & others])
   )
 
-(defn compile-data* [content env]
+(defn compile-inc* [content env]
   (let [[static dynamic]
         (binding [emitter/*env* env
                   *dynamic-forms* []
@@ -384,8 +384,8 @@ tag."
                 params)]
     `(let ~(vec changed-bindings) ~@body)))
 
-(defmacro compile-data
-  ([content] (compile-data* content &env))
+(defmacro compile-inc
+  ([content] (compile-inc* content &env))
   ([content params cache-sym]
    (let [params-with-sym (interleave (map #(list 'quote %) params) params)
          params-changed-sym (zipmap params (map #(gensym (name %)) params))
@@ -407,7 +407,7 @@ tag."
        (with-params-changed params params-changed-sym cache-sym
          `(swap! ~*cache-sym* assoc :params
                  ~(conj params-with-sym `hash-map))
-         (compile-data* content &env))))))
+         (compile-inc* content &env))))))
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])
@@ -417,5 +417,5 @@ tag."
 
   (binding [*cache-counter* 0]
     (let [x "c"]
-      (compile-data '[:e {} [:p {} x]])))
+      (compile-inc '[:e {} [:p {} x]])))
  )

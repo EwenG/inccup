@@ -1,8 +1,8 @@
 (ns ewen.inccup.core
-  (:require [ewen.inccup.compiler-string-macros
+  (:require [ewen.inccup.string.compiler-macros
              :refer [compile-html maybe-convert-raw-string]]
-            [ewen.inccup.compiler-data-macros
-             :refer [compile-data extract-params]]
+            [ewen.inccup.incremental.compiler-macros
+             :refer [compile-inc extract-params]]
             [ewen.inccup.util
              :refer [default-output-format name-with-attributes cljs-env?
                      *html-mode* *output-format*]]))
@@ -28,7 +28,7 @@
   (let [[{:keys [mode output-format]} content] (options-with-content
                                                 options-content &env)]
     (cond (= :inccup output-format)
-          `(compile-data ~content)
+          `(compile-inc ~content)
           mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]
@@ -48,7 +48,7 @@
                 cache-sym (gensym "cache")]
             `(let [~cache-sym (atom {})]
                (defn ~name ~args
-                 (compile-data ~content ~params ~cache-sym))))
+                 (compile-inc ~content ~params ~cache-sym))))
           mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]

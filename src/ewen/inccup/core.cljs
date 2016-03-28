@@ -1,6 +1,6 @@
 (ns ewen.inccup.core
-  (:require ewen.inccup.compiler-string
-            ewen.inccup.compiler-data))
+  (:require ewen.inccup.string.compiler
+            ewen.inccup.incremental.compiler))
 
 (comment
   (require '[ewen.inccup.core :refer-macros [html defhtml]])

@@ -1,4 +1,4 @@
-(ns ewen.inccup.emitter
+(ns ewen.inccup.incremental.emitter
   (:require [cljs.analyzer.api :as ana-api]
             [clojure.tools.reader :as reader]
             [cljs.analyzer :as ana]

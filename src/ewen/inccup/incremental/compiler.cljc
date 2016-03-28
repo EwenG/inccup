@@ -1,4 +1,4 @@
-(ns ewen.inccup.compiler-data)
+(ns ewen.inccup.incremental.compiler)
 
 (def ^:dynamic *cache* nil)
 
