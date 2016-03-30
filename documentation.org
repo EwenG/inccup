@@ -1,0 +1,15 @@
+* Cache
+
+Dynamic table of static cache objects
+The static object contains:
+
+- A dynamic counter incremented on every render. During the first render, the counter is always incremented. If the counter is > to the size of the dynamic table, then the size of the dynamic table is incremented. During next renders, if the counter is > to the size of the dynamic table, then the counter is reseted to 0
+- The last value of the function parameters
+- The last function result (a tree of inccup forms)
+- An array containing all dynamic tables (of static cache objects) of all sub components
+
+A new static cache object is created on every call to the html macro or to a function defined with the defhtml macro. The new static cache object is dynamically bound in order to be used by the underlying function.
+
+* Children reconcialiation
+
+Maybe set nodes ID using metadata ? -> Avoids the need to create the node in order to check its ID + All compiled nodes have a literal (static) vector
