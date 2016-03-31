@@ -3,13 +3,13 @@
 Dynamic table of static cache objects
 The static object contains:
 
-- A dynamic counter incremented on every render. During the first render, the counter is always incremented. If the counter is > to the size of the dynamic table, then the size of the dynamic table is incremented. During next renders, if the counter is > to the size of the dynamic table, then the counter is reseted to 0
+- A dynamic counter incremented on every render. When the counter is > the size of the dynamic table, the dynamic table growths. A component resets the counter of its children to 0 before it returns. When a counter is reseted to 0 before it reached the size of the dynamic table, then the dynamic table is shrinked.
 - The last value of the function parameters
 - The last function result (a tree of inccup forms)
 - An array containing all dynamic tables (of static cache objects) of all sub components
 
 A new static cache object is created on every call to the html macro or to a function defined with the defhtml macro. The new static cache object is dynamically bound in order to be used by the underlying function.
 
-* Children reconcialiation
+* Children reconciliation
 
-Maybe set nodes ID using metadata ? -> Avoids the need to create the node in order to check its ID + All compiled nodes have a literal (static) vector
+Add a special keyword parameter to defhtmls. When a child is passed an ID, it is given an ID HTML parameter. ID must be unique within a parent root. The parent root is defined by setting metadata on a defhtml. A HTML class is added to such root node.
