@@ -7,7 +7,7 @@
             [clojure.set :refer [union]]))
 
 (def ^:dynamic *cache-sym* nil)
-(def ^:dynamic *cache-counter* nil)
+(def ^:dynamic *cache-static-counter* nil)
 (def ^:dynamic *params-changed-sym* nil)
 (def ^:dynamic *dynamic-forms* nil)
 
@@ -340,32 +340,29 @@ tag."
 (defn compile-inc* [content env]
   (let [[static dynamic]
         (binding [emitter/*env* env
-                  *dynamic-forms* []
-                  *cache-counter* (when *cache-counter*
-                                    (inc *cache-counter*))]
+                  *dynamic-forms* []]
           [(compile-dispatch content []) *dynamic-forms*])
-        update-expr (dynamic-forms->update-expr dynamic)
-        cached-sym (gensym "cached")]
-    `(let [~cached-sym (or (get @~*cache-sym* ~*cache-counter*) ~static)
-           ~cached-sym (~update-expr ~cached-sym)]
-       ~(when *cache-counter*
-          `(when ~*cache-sym*
-             (swap! ~*cache-sym*
-                    assoc ~*cache-counter* ~cached-sym)))
-       ~cached-sym)))
+        update-expr (dynamic-forms->update-expr dynamic)]
+    `(let [cached# (or (aget comp/*cache* "prev-result") ~static)
+           cached# (~update-expr cached#)]
+       (when comp/*cache*
+         (aset comp/*cache* "prev-result" cached#)
+         (comp/clean-sub-cache comp/*cache*))
+       cached#)))
 
-(defn with-params-changed [params params-changed-sym cache-sym & body]
+(defn with-params-changed [params params-changed-sym & body]
   (let [changed-bindings
         (mapcat (fn [param]
                   [(get params-changed-sym param)
-                   `(or (not (:params @~cache-sym))
-                        (not= ~param (get (:params @~cache-sym) '~param)))])
+                   `(or (not (:params comp/*cache*))
+                        (not= ~param (get (:params comp/*cache*)
+                                          '~param)))])
                 params)]
     `(let ~(vec changed-bindings) ~@body)))
 
 (defmacro compile-inc
   ([content] (compile-inc* content &env))
-  ([content params cache-sym]
+  ([content params]
    (let [params-with-sym (interleave (map #(list 'quote %) params) params)
          params-changed-sym (zipmap params (map #(gensym (name %)) params))
          tracked-vars
@@ -381,12 +378,13 @@ tag."
              tracked-vars))]
      (binding [*tracked-vars* tracked-vars
                *params-changed-sym* params-changed-sym
-               *cache-counter* 0
-               *cache-sym* cache-sym]
-       (with-params-changed params params-changed-sym cache-sym
-         `(swap! ~*cache-sym* assoc :params
-                 ~(conj params-with-sym `hash-map))
-         (compile-inc* content &env))))))
+               *cache-static-counter* 0]
+       `(binding [comp/*cache* (comp/get-or-set comp/*cache*)]
+          ~(with-params-changed params params-changed-sym
+             `(when comp/*cache*
+                (aset comp/*cache* "params"
+                      ~(conj params-with-sym `hash-map)))
+             (compile-inc* content &env)))))))
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])
@@ -394,7 +392,7 @@ tag."
   (binding [*dynamic-forms* #{}]
     (compile-element '[:e {} [:p {} x]] []))
 
-  (binding [*cache-counter* 0]
+  (binding [*cache-static-counter* 0]
     (let [x "c"]
       (compile-inc '[:e {} [:p {} x]])))
  )
