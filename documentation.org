@@ -1,12 +1,15 @@
 * Cache
 
-Dynamic table of static cache objects
+A dynamic counter and a dynamic array of static cache objects
+The counter:
+
+- Is incremented on every render. When the counter is > the size of the dynamic array, the dynamic array growths. A component resets the counter of its children to 0 before it returns. When a counter is reseted to 0 before it reached the size of the dynamic array, then the dynamic array is shrinked.
+
 The static object contains:
 
-- A dynamic counter incremented on every render. When the counter is > the size of the dynamic table, the dynamic table growths. A component resets the counter of its children to 0 before it returns. When a counter is reseted to 0 before it reached the size of the dynamic table, then the dynamic table is shrinked.
 - The last value of the function parameters
 - The last function result (a tree of inccup forms)
-- An array containing all dynamic tables (of static cache objects) of all sub components
+- An array containing all sub caches of all sub components
 
 A new static cache object is created on every call to the html macro or to a function defined with the defhtml macro. The new static cache object is dynamically bound in order to be used by the underlying function.
 
