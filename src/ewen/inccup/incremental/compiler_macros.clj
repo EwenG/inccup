@@ -342,12 +342,7 @@ tag."
                   *dynamic-forms* []]
           [(compile-dispatch content []) *dynamic-forms*])
         update-expr (dynamic-forms->update-expr dynamic)]
-    `(let [cached# (or (aget comp/*cache* "prev-result") ~static)
-           cached# (~update-expr cached#)]
-       (when comp/*cache*
-         (aset comp/*cache* "prev-result" cached#)
-         (comp/clean-sub-cache comp/*cache*))
-       cached#)))
+    [static update-expr]))
 
 (defn with-params-changed [params params-changed-sym & body]
   (let [changed-bindings
@@ -360,7 +355,17 @@ tag."
     `(let ~(vec changed-bindings) ~@body)))
 
 (defmacro compile-inc
-  ([content] (compile-inc* content &env))
+  ([content]
+   (when *cache-static-counter*
+     (set! *cache-static-counter* (inc *cache-static-counter*)))
+   (let [[static update-expr] (compile-inc* content &env)]
+     `(binding [comp/*cache* (comp/get-static-cache
+                              comp/*cache* ~(dec *cache-static-counter*))]
+        (let [result# (-> (comp/safe-aget comp/*cache* "prev-result")
+                          (or ~static)
+                          (~update-expr))]
+          (comp/safe-aset comp/*cache* "prev-result" result#)
+          result#))))
   ([content params]
    (let [params-with-sym (interleave (map #(list 'quote %) params) params)
          params-changed-sym (zipmap params (map #(gensym (name %)) params))
@@ -378,12 +383,20 @@ tag."
      (binding [*tracked-vars* tracked-vars
                *params-changed-sym* params-changed-sym
                *cache-static-counter* 0]
-       `(binding [comp/*cache* (comp/get-or-set comp/*cache*)]
-          ~(with-params-changed params params-changed-sym
-             `(when comp/*cache*
-                (aset comp/*cache* "params"
-                      ~(conj params-with-sym `hash-map)))
-             (compile-inc* content &env)))))))
+       (let [[static update-expr] (compile-inc* content &env)]
+         `(binding [comp/*cache* (comp/new-dynamic-cache comp/*cache*)]
+            ~(with-params-changed params params-changed-sym
+               `(comp/safe-aset
+                 comp/*cache* "params" ~(conj params-with-sym `hash-map))
+               `(comp/make-static-cache
+                 comp/*cache* ~*cache-static-counter*)
+               `(let [result# (-> (comp/safe-aget
+                                   comp/*cache* "prev-result")
+                                  (or ~static)
+                                  (~update-expr))]
+                  (comp/safe-aset comp/*cache* "prev-result" result#)
+                  (comp/clean-sub-cache comp/*cache*)
+                  result#))))))))
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])

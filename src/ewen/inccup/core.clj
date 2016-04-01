@@ -41,6 +41,9 @@
   [name & meta-body]
   (let [[name [args & options-content]] (name-with-attributes
                                          name meta-body)
+        ;; TODO emits a warning if this is a redefinition of a var which
+        ;; does not have the ::defhtml meta set
+        name (vary-meta name assoc ::defhtml true)
         [{:keys [mode output-format]} content] (options-with-content
                                                 options-content &env)]
     (cond (= :inccup output-format)

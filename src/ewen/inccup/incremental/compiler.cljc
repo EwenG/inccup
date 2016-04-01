@@ -39,12 +39,20 @@
     (with-meta merged-attrs (assoc attrs1-meta ::map-attrs attrs2))))
 
 #?(:cljs
+   (defn safe-aset [obj k v]
+     (when obj (aset obj k v))))
+
+#?(:cljs
+   (defn safe-aget [obj k]
+     (when obj (aget obj k))))
+
+#?(:cljs
    (defn init-cache []
      (js-obj "dynamic-counter" 0
              "dynamic-array" (array))))
 
 #?(:cljs
-   (defn get-or-set-cache [cache]
+   (defn new-dynamic-cache [cache]
      (when cache
        (let [dynamic-counter (aget cache "dynamic-counter")
              current-cache (-> (aget cache "dynamic-array")
@@ -56,14 +64,33 @@
                new-cache))))))
 
 #?(:cljs
+   (defn clean-dynamic-array [c]
+     (let [dyn-arr (aget c "dynamic-array")
+           cache-shrink-nb (- (count dyn-arr)
+                              (aget c "dynamic-counter"))]
+       (dotimes [_ cache-shrink-nb]
+         (.pop dyn-arr)))
+     (aset c "dynamic-counter" 0)))
+
+#?(:cljs
    (defn clean-sub-cache [cache]
-     (doseq [c (aget cache "sub-cache")]
-       (let [dyn-arr (aget c "dynamic-array")
-             cache-shrink-nb (- (count dyn-arr)
-                                (aget c "dynamic-counter"))]
-         (dotimes [_ (range cache-shrink-nb)]
-           (.pop dyn-arr)))
-       (aset c "dynamic-counter" 0))))
+     (when cache
+       (doseq [c (aget cache "sub-cache")]
+         (clean-dynamic-array c)))))
+
+#?(:cljs
+   (defn get-static-cache [cache static-counter]
+     (when cache
+       (-> (aget cache "sub-cache")
+           (aget static-counter)))))
+
+#?(:cljs
+   (defn make-static-cache [cache static-counter]
+     (when cache
+       (let [sub-cache (aget cache "sub-cache")]
+         (when (not= static-counter (count sub-cache))
+           (dotimes [_ static-counter]
+             (.push sub-cache (init-cache))))))))
 
 (comment
   (merge-shortcut-attributes (with-meta {:f "e"}
