@@ -29,9 +29,8 @@
                      :form expr}))))))
 
 (defn compile-dynamic-expr [expr path]
-  (let [[expr used-vars] (track-vars expr)
-        expr `(constantly ~expr)]
-    (update-dynamic-forms expr path used-vars)
+  (let [[expr used-vars] (track-vars expr)]
+    (update-dynamic-forms `(constantly ~expr) path used-vars)
     (if (empty? used-vars) expr nil)))
 
 (def ^{:doc "Regular expression that parses a CSS-style id and class from
@@ -103,7 +102,7 @@ tag."
 (defmulti compile-form
   "Pre-compile certain standard forms, where possible."
   {:private true}
-  form-name)
+  (fn [expr path] (form-name expr)))
 
 (defmethod compile-form :default
   [expr path] (compile-dynamic-expr expr path))
