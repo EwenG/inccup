@@ -66,11 +66,18 @@
 #?(:cljs
    (defn clean-dynamic-array [c]
      (let [dyn-arr (aget c "dynamic-array")
-           cache-shrink-nb (- (count dyn-arr)
-                              (aget c "dynamic-counter"))]
-       (dotimes [_ cache-shrink-nb]
-         (.pop dyn-arr)))
-     (aset c "dynamic-counter" 0)))
+           dyn-counter (aget c "dynamic-counter")
+           cache-shrink-nb (- (count dyn-arr) dyn-counter)]
+       ;; dyn counter can be 0 either because the sub-component was not
+       ;; called because the var(s) it depends on did not change or because
+       ;; it is inside a loop that was executed on an empty collection.
+       ;; In the first case, we must not clean the dynamic array.
+       ;; The fact that we don't clean the array in the second case is an
+       ;; unfortunate side effect, but I can't see a simple way to avoid it.
+       (when (not= dyn-counter 0)
+         (dotimes [_ cache-shrink-nb]
+           (.pop dyn-arr))
+         (aset c "dynamic-counter" 0)))))
 
 #?(:cljs
    (defn clean-sub-cache [cache]

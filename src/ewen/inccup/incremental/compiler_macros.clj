@@ -348,24 +348,30 @@ tag."
   (let [changed-bindings
         (mapcat (fn [param]
                   [(get params-changed-sym param)
-                   `(or (not (:params comp/*cache*))
-                        (not= ~param (get (:params comp/*cache*)
+                   `(or (not (:params ~*cache-sym*))
+                        (not= ~param (get (:params ~*cache-sym*)
                                           '~param)))])
                 params)]
     `(let ~(vec changed-bindings) ~@body)))
 
 (defmacro compile-inc
   ([content]
-   (when *cache-static-counter*
-     (set! *cache-static-counter* (inc *cache-static-counter*)))
-   (let [[static update-expr] (compile-inc* content &env)]
-     `(binding [comp/*cache* (comp/get-static-cache
-                              comp/*cache* ~(dec *cache-static-counter*))]
-        (let [result# (-> (comp/safe-aget comp/*cache* "prev-result")
-                          (or ~static)
-                          (~update-expr))]
-          (comp/safe-aset comp/*cache* "prev-result" result#)
-          result#))))
+   (if *cache-static-counter*
+     ;; The html macro is used inside a defhtml
+     (do (set! *cache-static-counter* (inc *cache-static-counter*))
+         (let [static-counter (dec *cache-static-counter*)
+               [static update-expr] (compile-inc* content &env)]
+           `(let [~*cache-sym* (comp/get-static-cache
+                                ~*cache-sym* ~static-counter)
+                  ~*cache-sym* (comp/new-dynamic-cache ~*cache-sym*)]
+              (let [result# (-> (comp/safe-aget ~*cache-sym* "prev-result")
+                                (or ~static)
+                                (~update-expr))]
+                (comp/safe-aset ~*cache-sym* "prev-result" result#)
+                result#))))
+     ;; The html macro is used outside a defhtml, there is no need for
+     ;; caching
+     content))
   ([content params]
    (let [params-with-sym (interleave (map #(list 'quote %) params) params)
          params-changed-sym (zipmap params (map #(gensym (name %)) params))
@@ -382,21 +388,49 @@ tag."
              tracked-vars))]
      (binding [*tracked-vars* tracked-vars
                *params-changed-sym* params-changed-sym
-               *cache-static-counter* 0]
+               *cache-static-counter* 0
+               *cache-sym* (gensym "cache")]
        (let [[static update-expr] (compile-inc* content &env)]
-         `(binding [comp/*cache* (comp/new-dynamic-cache comp/*cache*)]
+         ;; The cache-sym is bound lexically and not dynamically, otherwise
+         ;; it could be an issue when a sub-component is called inside a
+         ;; lazy seq
+         `(let [~*cache-sym* (comp/new-dynamic-cache comp/*cache*)]
             ~(with-params-changed params params-changed-sym
                `(comp/safe-aset
-                 comp/*cache* "params" ~(conj params-with-sym `hash-map))
+                 ~*cache-sym* "params" ~(conj params-with-sym `hash-map))
                `(comp/make-static-cache
-                 comp/*cache* ~*cache-static-counter*)
+                 ~*cache-sym* ~*cache-static-counter*)
                `(let [result# (-> (comp/safe-aget
-                                   comp/*cache* "prev-result")
+                                   ~*cache-sym* "prev-result")
                                   (or ~static)
                                   (~update-expr))]
-                  (comp/safe-aset comp/*cache* "prev-result" result#)
-                  (comp/clean-sub-cache comp/*cache*)
+                  (comp/safe-aset ~*cache-sym* "prev-result" result#)
+                  (comp/clean-sub-cache ~*cache-sym*)
                   result#))))))))
+
+(defmethod emitter/emit* :var
+  [{:keys [info env form] :as ast}]
+  (let [var-name (:name info)]
+    (when (and (contains? emitter/*tracked-vars* form)
+             (identical? (get (:locals env) form)
+                         (get-in emitter/*tracked-vars* [form :env])))
+      (set! emitter/*tracked-vars*
+            (assoc-in emitter/*tracked-vars* [form :is-used] true)))
+    (if (and *cache-sym* (not= *cache-sym* form))
+      var-name
+      form)))
+
+(defmethod emitter/emit* :invoke
+  [{:keys [f args] :as ast}]
+  (let [is-defhtml? (-> (:info f) :meta :ewen.inccup.core/defhtml)]
+    (if is-defhtml?
+      (do
+        (set! *cache-static-counter* (inc *cache-static-counter*))
+        `(binding [comp/*cache* (comp/get-static-cache
+                                 ~*cache-sym*
+                                 ~(dec *cache-static-counter*))]
+           ~(conj (map emitter/emit* args) (emitter/emit* f))))
+      (conj (map emitter/emit* args) (emitter/emit* f)))))
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])

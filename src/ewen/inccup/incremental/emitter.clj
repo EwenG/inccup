@@ -28,15 +28,6 @@
 (defmethod emit* :set
   [{:keys [items]}] (into #{} (map emit* items)))
 
-(defmethod emit* :var
-  [{:keys [info env form] :as ast}]
-  (let [var-name (:name info)]
-    (if (and (contains? *tracked-vars* form)
-             (identical? (get (:locals env) form)
-                         (get-in *tracked-vars* [form :env])))
-      (set! *tracked-vars* (assoc-in *tracked-vars* [form :is-used] true)))
-    var-name))
-
 (comment
   (binding [*tracked-vars* {'e false}]
     (emit* (ana-api/analyze (ana-api/empty-env)
@@ -58,7 +49,7 @@
 (defn emit-do-content [{:keys [statements ret]}]
   (into (list (emit* ret)) (map emit* statements)))
 
-(defmethod emit* :invoke
+#_(defmethod emit* :invoke
   [{:keys [f args] :as ast}]
   (conj (map emit* args) (emit* f)))
 
