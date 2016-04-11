@@ -13,6 +13,7 @@
   (defhtml tt [x y] [:e.rr {} [:p.a {:class x} y]])
 
   (defhtml tt [x] [:p {} x (html [:p])])
+  (defhtml tt [x] [:p {} x (html [:p {} (html [:div])])])
 
   (defhtml tt2 [x] [:p {} x])
   (defhtml tt [x] [:p {} x (tt2 3)])

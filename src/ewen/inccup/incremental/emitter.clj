@@ -5,13 +5,10 @@
             [cljs.tagged-literals :as tags]
             [cljs.env :as env]))
 
-(def ^:dynamic *tracked-vars* #{})
-(def ^:dynamic *env* nil)
-
 (defmulti emit* :op)
 
 (defmethod emit* :vector
-  [{:keys [items]}]
+  [{:keys [items form] :as ast}]
   (apply vector (map emit* items)))
 
 (defmethod emit* :constant
@@ -28,19 +25,14 @@
 (defmethod emit* :set
   [{:keys [items]}] (into #{} (map emit* items)))
 
-(comment
-  (binding [*tracked-vars* {'e false}]
-    (emit* (ana-api/analyze (ana-api/empty-env)
-                            '(let [e "e"]
-                               e)))
-    *tracked-vars*)
-  )
-
 (defmethod emit* :var-special
   [{{{name :name} :info} :var}] `(var ~name))
 
 (defmethod emit* :def
   [{:keys [var init]}] `(def ~(emit* var) ~(emit* init)))
+
+(defn var-emit [{:keys [info env form] :as ast}]
+  (:name info))
 
 (defmethod emit* :do
   [{:keys [statements ret]}]
@@ -49,8 +41,7 @@
 (defn emit-do-content [{:keys [statements ret]}]
   (into (list (emit* ret)) (map emit* statements)))
 
-#_(defmethod emit* :invoke
-  [{:keys [f args] :as ast}]
+(defn invoke-emit [{:keys [f args] :as ast}]
   (conj (map emit* args) (emit* f)))
 
 (defmethod emit* :let
@@ -182,7 +173,18 @@
   (emit* (ana-api/analyze
           (ana-api/empty-env)
           '(case e (1 2) "1" 3 "3" "d")))
- )
+  )
+
+(defmethod emit* :meta
+  [{:keys [expr meta form] :as ast}]
+  (prn (str "meta " (emit* meta)))
+  `(with-meta ~(emit* expr) ~(emit* meta)))
+
+(comment
+  (emit* (ana-api/analyze
+          (ana-api/empty-env)
+          [(with-meta {} {:e "e"})]))
+  )
 
 (defmethod emit* :deftype*
   [{:keys [form t fields pmasks protocols body] :as ast}]
@@ -199,14 +201,6 @@
 (defmethod emit* :js-value
   [{:keys [form] :as ast}]
   (throw (Exception. "js-value is not supported by inccup")))
-
-(defn track-vars [expr]
-  (binding [*tracked-vars* *tracked-vars*]
-    (let [cljs-expanded (-> (or *env* (ana-api/empty-env))
-                            (ana-api/analyze expr) emit*)
-          used-vars (keep #(when (:is-used %) (:symbol %))
-                          (vals *tracked-vars*))]
-      [cljs-expanded (set used-vars)])))
 
 
 (comment
@@ -252,6 +246,5 @@
   (:segs (ana-api/analyze
           (ana-api/empty-env)
           '(str "e" "f")))
-
 
   )

@@ -1,8 +1,7 @@
 (ns ewen.inccup.incremental.compiler-macros
   (:require [ewen.inccup.incremental.compiler :as comp]
-            [ewen.inccup.incremental.emitter :as emitter
-             :refer [*tracked-vars* track-vars]]
-            [cljs.analyzer.api :refer [analyze empty-env]]
+            [ewen.inccup.incremental.emitter :as emitter]
+            [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]))
 
@@ -10,6 +9,35 @@
 (def ^:dynamic *cache-static-counter* nil)
 (def ^:dynamic *params-changed-sym* nil)
 (def ^:dynamic *dynamic-forms* nil)
+(def ^:dynamic *tracked-vars* #{})
+(def ^:dynamic *env* nil)
+
+(defn new-local-binding [name env]
+  {:name name
+   :binding-form? true
+   :op :var
+   :env env
+   :info {:name name, :shadow nil}
+   :shadow nil
+   :local true})
+
+(defn track-vars [expr]
+  (binding [*tracked-vars* *tracked-vars*]
+    (let [{:keys [locals] :as env} (or *env* (ana-api/empty-env))
+          ;; Add *cache-sym* to the environment local bindings of the
+          ;; analyzer if it is not already there. This is useful because
+          ;; the macro-expansion order is inverted by the call to the
+          ;; analyzer and emitter and thus, the wrapping let forms are not
+          ;; analyzed.
+          env (if (get locals *cache-sym*)
+                env
+                (update-in env [:locals]
+                           assoc *cache-sym*
+                           (new-local-binding *cache-sym* env)))
+          cljs-expanded (-> env (ana-api/analyze expr) emitter/emit*)
+          used-vars (keep #(when (:is-used %) (:symbol %))
+                          (vals *tracked-vars*))]
+      [cljs-expanded (set used-vars)])))
 
 (defn update-dynamic-forms [expr path used-vars]
   (when *dynamic-forms*
@@ -160,12 +188,7 @@ tag."
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content] path]
   (let [[tag attrs _] (normalize-element [tag attrs])
-        compiled-attrs (compile-attr-map attrs (conj path 1))
-        compiled-attrs (if (map? compiled-attrs)
-                         (vary-meta
-                          compiled-attrs
-                          assoc ::comp/shortcut-attrs compiled-attrs)
-                         compiled-attrs)]
+        compiled-attrs (compile-attr-map attrs (conj path 1))]
     (if (container-tag? tag content)
       (into [tag compiled-attrs] (compile-seq content path 2))
       [tag compiled-attrs])))
@@ -338,7 +361,7 @@ tag."
 
 (defn compile-inc* [content env]
   (let [[static dynamic]
-        (binding [emitter/*env* env
+        (binding [*env* env
                   *dynamic-forms* []]
           [(compile-dispatch content []) *dynamic-forms*])
         update-expr (dynamic-forms->update-expr dynamic)]
@@ -410,15 +433,12 @@ tag."
 
 (defmethod emitter/emit* :var
   [{:keys [info env form] :as ast}]
-  (let [var-name (:name info)]
-    (when (and (contains? emitter/*tracked-vars* form)
+  (when (and (contains? *tracked-vars* form)
              (identical? (get (:locals env) form)
-                         (get-in emitter/*tracked-vars* [form :env])))
-      (set! emitter/*tracked-vars*
-            (assoc-in emitter/*tracked-vars* [form :is-used] true)))
-    (if (and *cache-sym* (not= *cache-sym* form))
-      var-name
-      form)))
+                         (get-in *tracked-vars* [form :env])))
+    (set! *tracked-vars*
+          (assoc-in *tracked-vars* [form :is-used] true)))
+  (emitter/var-emit ast))
 
 (defmethod emitter/emit* :invoke
   [{:keys [f args] :as ast}]
@@ -429,8 +449,16 @@ tag."
         `(binding [comp/*cache* (comp/get-static-cache
                                  ~*cache-sym*
                                  ~(dec *cache-static-counter*))]
-           ~(conj (map emitter/emit* args) (emitter/emit* f))))
-      (conj (map emitter/emit* args) (emitter/emit* f)))))
+           ~(emitter/invoke-emit ast)))
+      (emitter/invoke-emit ast))))
+
+(comment
+  (binding [*tracked-vars* {'e false}]
+    (emit* (ana-api/analyze (ana-api/empty-env)
+                            '(let [e "e"]
+                               e)))
+    *tracked-vars*)
+  )
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])
