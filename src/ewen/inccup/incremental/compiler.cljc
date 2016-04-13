@@ -1,6 +1,12 @@
-(ns ewen.inccup.incremental.compiler)
+(ns ewen.inccup.incremental.compiler
+  (:require [clojure.string :as str]))
 
 (def ^:dynamic *cache* nil)
+
+(def ^{:doc "Regular expression that parses a CSS-style id and class from
+an element name."
+       :private true}
+  re-tag #"([^\s\.#]+)(?:#([^\s\.#]+))?(?:\.([^\s#]+))?")
 
 (defn unevaluated?
   "True if the expression has not been evaluated."
@@ -16,6 +22,25 @@
                              :else (str %1 " " %2))
                       attrs1 attrs2)]
     (if id (assoc merged-attrs :id id) merged-attrs)))
+
+(defn normalize-element
+  "Ensure an element vector is of the form [tag-name attrs content]."
+  [[tag & content]]
+  (when (not (or (keyword? tag) (symbol? tag) (string? tag)))
+    #?(:clj (throw (IllegalArgumentException.
+                    (str tag " is not a valid element name.")))
+       :cljs (throw (js/Error. (str tag " is not a valid element name.")))))
+  (let [[_ tag id class] (re-matches re-tag (name tag))
+        tag-attrs        (cond-> {}
+                           id (assoc :id id)
+                           class (assoc
+                                  :class
+                                  (if class
+                                    (str/replace ^String class "." " "))))
+        map-attrs        (first content)]
+    (if (map? map-attrs)
+      [tag (merge-attributes tag-attrs map-attrs) (next content)]
+      [tag tag-attrs content])))
 
 (defn merge-shortcut-attributes [attrs1 attrs2]
   (let [attrs1-meta (meta attrs1)

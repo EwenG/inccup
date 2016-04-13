@@ -18,7 +18,7 @@
   (defhtml tt2 [x] [:p {} x])
   (defhtml tt [x] [:p {} x (tt2 3)])
 
-  (defhtml tt [x] [x x x])
+  (defhtml tt [x y] [x y])
 
   (binding [*cache* (init-cache)]
     (tt 4)

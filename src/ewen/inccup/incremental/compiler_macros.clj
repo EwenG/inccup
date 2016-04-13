@@ -49,7 +49,7 @@
               (conj (pop *dynamic-forms*)
                     {:path path
                      :var-deps (union used-vars prev-var-deps)
-                     :form (comp expr prev-form)}))
+                     :form `(comp ~expr ~prev-form)}))
         (set! *dynamic-forms*
               (conj *dynamic-forms*
                     {:path path
@@ -60,36 +60,6 @@
   (let [[expr used-vars] (track-vars expr)]
     (update-dynamic-forms `(constantly ~expr) path used-vars)
     (if (empty? used-vars) expr nil)))
-
-(def ^{:doc "Regular expression that parses a CSS-style id and class from
-an element name."
-       :private true}
-  re-tag #"([^\s\.#]+)(?:#([^\s\.#]+))?(?:\.([^\s#]+))?")
-
-(def ^{:doc "A list of elements that must be rendered without a closing
-tag."
-       :private true}
-  void-tags
-  #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input" "keygen"
-    "link" "meta" "param" "source" "track" "wbr"})
-
-(defn normalize-element
-  "Ensure an element vector is of the form [tag-name attrs content]."
-  [[tag & content]]
-  (when (not (or (keyword? tag) (symbol? tag) (string? tag)))
-    (throw (IllegalArgumentException.
-            (str tag " is not a valid element name."))))
-  (let [[_ tag id class] (re-matches re-tag (name tag))
-        tag-attrs        (cond-> {}
-                           id (assoc :id id)
-                           class (assoc
-                                  :class
-                                  (if class
-                                    (.replace ^String class "." " "))))
-        map-attrs        (first content)]
-    (if (map? map-attrs)
-      [tag (comp/merge-attributes tag-attrs map-attrs) (next content)]
-      [tag tag-attrs content])))
 
 (defn compile-attr-map
   "Returns an unevaluated form that will render the supplied map as HTML
@@ -111,8 +81,20 @@ tag."
                          (comp/merge-map-attributes % {}))
            form (when path `#(if (map? ~expr) nil ~expr))]
        (update-dynamic-forms attr-form attr-path used-vars)
-       (when expr (update-dynamic-forms form path used-vars ))
+       (when expr (update-dynamic-forms form path used-vars))
        nil))))
+
+(defn dynamic-tag [tag tag-path attr-path]
+  {:pred [(not (literal? tag))]}
+  (let [[expr used-vars] (track-vars tag)
+        tag-form `#(let [[tag# ~'_ ~'_] (comp/normalize-element [~expr])]
+                     tag#)
+        attr-form `#(let [[~'_ tag-attrs# _]
+                          (comp/normalize-element [~expr])]
+                      (comp/merge-shortcut-attributes % tag-attrs#))]
+    (update-dynamic-forms tag-form tag-path used-vars)
+    (update-dynamic-forms attr-form attr-path used-vars)
+    nil))
 
 (defn- form-name
   "Get the name of the supplied form."
@@ -182,7 +164,7 @@ tag."
 
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content] path]
-  (let [[tag attrs _] (normalize-element [tag attrs])
+  (let [[tag attrs _] (comp/normalize-element [tag attrs])
         compiled-attrs (compile-attr-map attrs (conj path 1))]
     (into [tag compiled-attrs] (compile-seq content path 2))
     [tag compiled-attrs]))
@@ -194,7 +176,7 @@ tag."
 (defmethod compile-element ::literal-tag
   [[tag attrs & content :as element] path]
   (let [[tag tag-attrs [first-content & rest-content]]
-        (normalize-element element)
+        (comp/normalize-element element)
         tag-attrs (if (map? tag-attrs)
                     (vary-meta
                      tag-attrs assoc ::comp/shortcut-attrs tag-attrs)
@@ -202,7 +184,13 @@ tag."
     (maybe-attr-map first-content (conj path 1) (conj path 2))
     (into [tag tag-attrs nil] (compile-seq rest-content path 3))))
 
-
+(defmethod compile-element ::default
+  [[tag attrs & rest-content] path]
+  (dynamic-tag tag (conj path 0) (conj path 1))
+  (maybe-attr-map attrs (conj path 1) (conj path 2))
+  (if (nil? attrs)
+    [nil {}]
+    (into [nil {} nil] (compile-seq rest-content path 3))))
 
 (declare compile-dispatch)
 
