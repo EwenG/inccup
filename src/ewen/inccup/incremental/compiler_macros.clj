@@ -73,11 +73,6 @@ tag."
   #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input" "keygen"
     "link" "meta" "param" "source" "track" "wbr"})
 
-(defn- container-tag?
-  "Returns true if the tag has content or is not a void tag."
-  [tag content]
-  (or content (not (void-tags tag))))
-
 (defn normalize-element
   "Ensure an element vector is of the form [tag-name attrs content]."
   [[tag & content]]
@@ -189,9 +184,8 @@ tag."
   [[tag attrs & content] path]
   (let [[tag attrs _] (normalize-element [tag attrs])
         compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (if (container-tag? tag content)
-      (into [tag compiled-attrs] (compile-seq content path 2))
-      [tag compiled-attrs])))
+    (into [tag compiled-attrs] (compile-seq content path 2))
+    [tag compiled-attrs]))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content] path]
@@ -205,13 +199,10 @@ tag."
                     (vary-meta
                      tag-attrs assoc ::comp/shortcut-attrs tag-attrs)
                     tag-attrs)]
-    (if (container-tag? tag content)
-      (do
-        (maybe-attr-map first-content (conj path 1) (conj path 2))
-        (into [tag tag-attrs nil] (compile-seq rest-content path 3)))
-      (do
-        (maybe-attr-map first-content (conj path 1))
-        (into [tag tag-attrs])))))
+    (maybe-attr-map first-content (conj path 1) (conj path 2))
+    (into [tag tag-attrs nil] (compile-seq rest-content path 3))))
+
+
 
 (declare compile-dispatch)
 

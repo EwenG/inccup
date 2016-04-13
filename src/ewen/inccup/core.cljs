@@ -18,6 +18,8 @@
   (defhtml tt2 [x] [:p {} x])
   (defhtml tt [x] [:p {} x (tt2 3)])
 
+  (defhtml tt [x] [x x x])
+
   (binding [*cache* (init-cache)]
     (tt 4)
     (clean-dynamic-array *cache*)
