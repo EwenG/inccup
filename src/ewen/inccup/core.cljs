@@ -14,6 +14,7 @@
 
   (defhtml tt [x] [:p {} x (html [:p])])
   (defhtml tt [x] [:p {} x (html [:p {} (html [:div])])])
+  (defhtml tt [x y] [:p {} x (html [:p {} y])])
 
   (defhtml tt2 [x] [:p {} x])
   (defhtml tt [x] [:p {} x (tt2 3)])
