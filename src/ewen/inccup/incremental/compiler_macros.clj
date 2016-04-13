@@ -21,19 +21,24 @@
    :shadow nil
    :local true})
 
+(defn maybe-add-env-local [{:keys [locals] :as env} sym]
+  (if (get locals sym)
+    env
+    (update-in env [:locals]
+               assoc sym
+               (new-local-binding sym env))))
+
 (defn track-vars [expr]
   (binding [*tracked-vars* *tracked-vars*]
     (let [{:keys [locals] :as env} (or *env* (ana-api/empty-env))
-          ;; Add *cache-sym* to the environment local bindings of the
-          ;; analyzer if it is not already there. This is useful because
-          ;; the macro-expansion order is inverted by the call to the
-          ;; analyzer and emitter and thus, the wrapping let forms are not
-          ;; analyzed.
-          env (if (get locals *cache-sym*)
-                env
-                (update-in env [:locals]
-                           assoc *cache-sym*
-                           (new-local-binding *cache-sym* env)))
+          ;; Add *cache-sym* and all *params-changed-sym* to the
+          ;; environment local bindings of the analyzer if it is not
+          ;; already there. This is useful because the macro-expansion
+          ;; order is inverted by the call to the analyzer and emitter
+          ;; and thus, the wrapping let forms are not analyzed.
+          env (reduce maybe-add-env-local
+                      (or *env* (ana-api/empty-env))
+                      (into [*cache-sym*] (vals *params-changed-sym*)))
           cljs-expanded (-> env (ana-api/analyze expr) emitter/emit*)
           used-vars (keep #(when (:is-used %) (:symbol %))
                           (vals *tracked-vars*))]
@@ -108,6 +113,10 @@
   "Pre-compile certain standard forms, where possible."
   {:private true}
   (fn [expr path] (form-name expr)))
+
+#_(defmethod compile-form "for"
+  [[_ bindings body] path]
+  `(apply str (for ~bindings ~(compile-html body))))
 
 (defmethod compile-form :default
   [expr path] (compile-dynamic-expr expr path))
