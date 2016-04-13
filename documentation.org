@@ -16,3 +16,8 @@ A new static cache object is created on every call to the html macro or to a fun
 * Children reconciliation
 
 Add a special keyword parameter to defhtmls. When a child is passed an ID, it is given an ID HTML parameter. ID must be unique within a parent root. The parent root is defined by setting metadata on a defhtml. A HTML class is added to such root node.
+
+* Container tags / void tags
+
+When outputting datastructures, inccup treats all tags as container tags,
+and never as void tags because it makes the ::default compilation strategy much simpler. It is the responsability of the caller to remove the content of void tags.
