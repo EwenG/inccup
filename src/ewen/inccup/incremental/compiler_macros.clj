@@ -166,8 +166,7 @@
   [[tag attrs & content] path]
   (let [[tag attrs _] (comp/normalize-element [tag attrs])
         compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (into [tag compiled-attrs] (compile-seq content path 2))
-    [tag compiled-attrs]))
+    (into [tag compiled-attrs] (compile-seq content path 2))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content] path]
@@ -292,11 +291,16 @@
   {:pre [(or (and form (nil? sub-forms))
              (and (nil? form) sub-forms))
          (not (empty? path))]}
-  (if form
-    `(~(var-deps->predicate var-deps)
-      (update-in ~path ~form))
-    `(~(var-deps->predicate var-deps)
-      (update-in ~path ~(dynamic-forms->update-expr sub-forms)))))
+  (let [predicate (var-deps->predicate var-deps)]
+    (cond
+      (not predicate)
+      nil
+      form
+      `(~(var-deps->predicate var-deps)
+        (update-in ~path ~form))
+      :else
+      `(~(var-deps->predicate var-deps)
+        (update-in ~path ~(dynamic-forms->update-expr sub-forms))))))
 
 (defn dynamic-forms->update-expr [dynamic-forms]
   (cond (empty? dynamic-forms) ;; only static
