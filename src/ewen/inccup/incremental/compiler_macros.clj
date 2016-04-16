@@ -64,7 +64,7 @@
 (defn compile-dynamic-expr [expr path]
   (let [[expr used-vars] (track-vars expr)]
     (update-dynamic-forms `(constantly ~expr) path used-vars)
-    (if (empty? used-vars) expr nil)))
+    nil))
 
 (defn compile-attr-map
   "Returns an unevaluated form that will render the supplied map as HTML
@@ -88,6 +88,13 @@
        (update-dynamic-forms attr-form attr-path used-vars)
        (when expr (update-dynamic-forms form path used-vars))
        nil))))
+
+(defn- literal?
+  "True if x is a literal value that can be rendered as-is."
+  [x]
+  (and (not (comp/unevaluated? x))
+       (or (not (or (vector? x) (map? x)))
+           (every? literal? x))))
 
 (defn dynamic-tag [tag tag-path attr-path]
   {:pred [(not (literal? tag))]}
@@ -114,9 +121,14 @@
   {:private true}
   (fn [expr path] (form-name expr)))
 
-#_(defmethod compile-form "for"
-  [[_ bindings body] path]
-  `(apply str (for ~bindings ~(compile-html body))))
+(defmethod compile-form "for"
+  [[_ bindings body :as expr] path]
+  (if (or (vector? body)
+          (string? body)
+          (keyword? body)
+          (literal? body))
+    (compile-dynamic-expr `(for ~bindings (compile-inc ~body)) path)
+    (compile-dynamic-expr expr path)))
 
 (defmethod compile-form :default
   [expr path] (compile-dynamic-expr expr path))
@@ -132,13 +144,6 @@
   [x type]
   (if-let [hint (-> x meta :tag)]
     (isa? (eval hint) type)))
-
-(defn- literal?
-  "True if x is a literal value that can be rendered as-is."
-  [x]
-  (and (not (comp/unevaluated? x))
-       (or (not (or (vector? x) (map? x)))
-           (every? literal? x))))
 
 (defn- not-implicit-map?
   "True if we can infer that x is not a map."
@@ -289,7 +294,7 @@
 
 (defn var-deps->predicate [var-deps]
   (cond (nil? *params-changed-sym*) true
-        (empty? var-deps) false
+        (empty? var-deps) `(not (:params ~*cache-sym*))
         :else (let [preds (doall
                            (map #(get *params-changed-sym* %) var-deps))]
                 (if (= 1 (count preds))
@@ -301,13 +306,9 @@
              (and (nil? form) sub-forms))
          (not (empty? path))]}
   (let [predicate (var-deps->predicate var-deps)]
-    (cond
-      (not predicate)
-      nil
-      form
+    (if form
       `(~(var-deps->predicate var-deps)
         (update-in ~path ~form))
-      :else
       `(~(var-deps->predicate var-deps)
         (update-in ~path ~(dynamic-forms->update-expr sub-forms))))))
 
