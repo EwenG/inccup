@@ -177,7 +177,6 @@
 
 (defmethod emit* :meta
   [{:keys [expr meta form] :as ast}]
-  (prn (str "meta " (emit* meta)))
   `(with-meta ~(emit* expr) ~(emit* meta)))
 
 (comment
@@ -222,11 +221,9 @@
     '(let [e "e"]
        e)))
 
-  (defmacro mm [] 'f)
-
   (ast-show-only (ana-api/analyze (ana-api/empty-env)
                            '(let [e "e"]
-                              (mm))) [:op])
+                              (ewen.inccup.incremental.emitter/mm))) [:op])
 
   (get-in
    (ana-api/analyze
@@ -246,5 +243,12 @@
   (:segs (ana-api/analyze
           (ana-api/empty-env)
           '(str "e" "f")))
+
+  (defmacro mm [] (prn "e") :e)
+
+  (emit* (ana-api/analyze
+          (ana-api/empty-env)
+          '(for [x ["e"]]
+             (ewen.inccup.incremental.emitter/mm))))
 
   )
