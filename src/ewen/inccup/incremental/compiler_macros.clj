@@ -424,13 +424,29 @@
                   (comp/clean-sub-cache ~*cache-sym*)
                   result#))))))))
 
+(defn collect-input-var-deps
+  [tracked-vars collected-vars
+   {:keys [op local init name env children :as ast]}]
+  (cond
+    (and (= :var op)
+         (contains? tracked-vars name)
+         (identical? (get (:locals env) name)
+                     (get-in tracked-vars [name :env])))
+    (conj collected-vars ast)
+    (and (= :var op) local init)
+    (collect-input-var-deps tracked-vars collected-vars init)
+    (not (empty? children))
+    (->> (map (partial collect-input-var-deps tracked-vars collected-vars)
+              children)
+         (apply union))
+    :else collected-vars))
+
 (defmethod emitter/emit* :var
   [{:keys [info env form] :as ast}]
-  (when (and (contains? *tracked-vars* form)
-             (identical? (get (:locals env) form)
-                         (get-in *tracked-vars* [form :env])))
-    (set! *tracked-vars*
-          (assoc-in *tracked-vars* [form :is-used] true)))
+  (let [used-vars (collect-input-var-deps *tracked-vars* #{} ast)]
+    (doseq [{:keys [name]} used-vars]
+      (set! *tracked-vars*
+            (assoc-in *tracked-vars* [name :is-used] true))))
   (emitter/var-emit ast))
 
 (defmethod emitter/emit* :invoke
