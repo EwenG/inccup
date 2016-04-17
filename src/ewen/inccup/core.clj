@@ -49,7 +49,7 @@
     (cond (= :inccup output-format)
           (let [params (extract-params args)]
             `(defn ~name ~args
-               (compile-inc ~content ~params)))
+               (compile-inc-with-params ~content ~params)))
           mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]
