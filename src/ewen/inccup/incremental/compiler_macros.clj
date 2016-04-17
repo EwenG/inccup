@@ -378,25 +378,25 @@
                 params)]
     `(let ~(vec changed-bindings) ~@body)))
 
-(defmacro compile-inc
-  ([content]
-   (if *cache-static-counter*
-     ;; The html macro is used inside a defhtml
-     (do (set! *cache-static-counter* (inc *cache-static-counter*))
-         (let [static-counter (dec *cache-static-counter*)
-               [static update-expr] (compile-inc* content &env)]
-           `(let [~*cache-sym* (comp/get-static-cache
-                                ~*cache-sym* ~static-counter)
-                  ~*cache-sym* (comp/new-dynamic-cache ~*cache-sym*)]
-              (let [result# (-> (comp/safe-aget ~*cache-sym* "prev-result")
-                                (or ~static)
-                                (~update-expr))]
-                (comp/safe-aset ~*cache-sym* "prev-result" result#)
-                result#))))
-     ;; The html macro is used outside a defhtml, there is no need for
-     ;; caching
-     content))
-  ([content params]
+(defmacro compile-inc [content]
+  (if *cache-static-counter*
+    ;; The html macro is used inside a defhtml
+    (do (set! *cache-static-counter* (inc *cache-static-counter*))
+        (let [static-counter (dec *cache-static-counter*)
+              [static update-expr] (compile-inc* content &env)]
+          `(let [~*cache-sym* (comp/get-static-cache
+                               ~*cache-sym* ~static-counter)
+                 ~*cache-sym* (comp/new-dynamic-cache ~*cache-sym*)]
+             (let [result# (-> (comp/safe-aget ~*cache-sym* "prev-result")
+                               (or ~static)
+                               (~update-expr))]
+               (comp/safe-aset ~*cache-sym* "prev-result" result#)
+               result#))))
+    ;; The html macro is used outside a defhtml, there is no need for
+    ;; caching
+    content))
+
+(defmacro compile-inc-with-params [content params]
    (let [params-with-sym (interleave (map #(list 'quote %) params) params)
          params-changed-sym (zipmap params (map #(gensym (name %)) params))
          tracked-vars
@@ -430,7 +430,7 @@
                                   (~update-expr))]
                   (comp/safe-aset ~*cache-sym* "prev-result" result#)
                   (comp/clean-sub-cache ~*cache-sym*)
-                  result#))))))))
+                  result#)))))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
