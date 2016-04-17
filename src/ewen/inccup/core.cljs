@@ -21,6 +21,13 @@
 
   (defhtml tt [x y] [x y])
 
+  (defhtml tt [x] [:p {} (for [y ["a" x]]
+                           [:div y])])
+
+  (defhtml tt [x] [:p {} (if x x "b")])
+
+
+
   (binding [*cache* (init-cache)]
     (tt 4)
     (clean-dynamic-array *cache*)
