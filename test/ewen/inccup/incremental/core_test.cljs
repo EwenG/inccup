@@ -32,17 +32,6 @@
 (defhtml template1 [x y] [:p {} x (html [:p x]) (template2 y)])
 (def cache-seq (atom []))
 
-(defhtml template3 [x] [:p {} (html x)])
-
-(comment
-  (binding [*cache* (init-cache)]
-    (let [res1 (template3 1)
-          _ (clean-dynamic-array *cache*)
-          _ (pprint *cache*)
-          res2 (template3 1)]
-      (identical? res1 res2)))
-  )
-
 (deftest cache
   (testing "cache"
     (reset! cache-seq [])
@@ -57,6 +46,7 @@
             _ (clean-dynamic-array *cache*)]
         (is (not= res1 res3))
         (is (identical? res2 res3))
+        (is (identical? (get-in res1 [4 1]) (get-in res2 [4 1])))
         (is
          (=
           @cache-seq
