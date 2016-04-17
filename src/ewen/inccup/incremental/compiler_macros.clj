@@ -123,12 +123,20 @@
 
 (defmethod compile-form "for"
   [[_ bindings body :as expr] path]
-  (if (or (vector? body)
-          (string? body)
-          (keyword? body)
-          (literal? body))
-    (compile-dynamic-expr `(for ~bindings (compile-inc ~body)) path)
-    (compile-dynamic-expr expr path)))
+  ;; If the body of the for expression is not at least partially a literal,
+  ;; it is useless to try to compile it
+  (let [body (if (or (vector? body) (literal? body))
+               `(compile-inc ~body) body)]
+    (compile-dynamic-expr `(for ~bindings ~body) path)))
+
+(defmethod compile-form "if"
+  [[_ condition & body] path]
+  `(if ~condition
+     ~@(for [x body]
+         ;; Do not try to compile any expression of the if body that is not
+         ;; at least partially a literal
+         (if (or (vector? x) (literal? x))
+           `(compile-inc ~x) x))))
 
 (defmethod compile-form :default
   [expr path] (compile-dynamic-expr expr path))
