@@ -160,6 +160,9 @@
       (not (comp/unevaluated? x))
       (not-hint? x java.util.Map)))
 
+(defn with-dom-node [content]
+  `(with-meta ~content (cljs.core/js-obj "dom-node" nil)))
+
 (defn- element-compile-strategy
   "Returns the compilation strategy to use for a given element."
   [[tag attrs & content :as element] path]
@@ -182,13 +185,14 @@
   element-compile-strategy)
 
 (defmethod compile-element ::all-literal
-  [element path] element)
+  [element path] (with-dom-node element))
 
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content] path]
   (let [[tag attrs _] (comp/normalize-element [tag attrs])
         compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (into [tag compiled-attrs] (compile-seq content path 2))))
+    (with-dom-node
+      (into [tag compiled-attrs] (compile-seq content path 2)))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content] path]
@@ -203,7 +207,8 @@
                      tag-attrs assoc ::comp/shortcut-attrs tag-attrs)
                     tag-attrs)]
     (maybe-attr-map first-content (conj path 1) (conj path 2))
-    (into [tag tag-attrs nil] (compile-seq rest-content path 3))))
+    (with-dom-node
+      (into [tag tag-attrs nil] (compile-seq rest-content path 3)))))
 
 (defmethod compile-element ::default
   [[tag attrs & rest-content] path]
@@ -211,7 +216,8 @@
   (maybe-attr-map attrs (conj path 1) (conj path 2))
   (if (nil? attrs)
     [nil {}]
-    (into [nil {} nil] (compile-seq rest-content path 3))))
+    (with-dom-node
+      (into [nil {} nil] (compile-seq rest-content path 3)))))
 
 (declare compile-dispatch)
 
@@ -302,7 +308,7 @@
 
 (defn var-deps->predicate [var-deps]
   (cond (nil? *params-changed-sym*) true
-        (empty? var-deps) `(not (:params ~*cache-sym*))
+        (empty? var-deps) `(not (comp/safe-aget ~*cache-sym* "params"))
         :else (let [preds (doall
                            (map #(get *params-changed-sym* %) var-deps))]
                 (if (= 1 (count preds))
@@ -311,40 +317,38 @@
 
 (defn dynamic-form->update-expr [{:keys [path var-deps form sub-forms]}]
   {:pre [(or (and form (nil? sub-forms))
-             (and (nil? form) sub-forms))
-         (not (empty? path))]}
+             (and (nil? form) sub-forms))]}
   (let [predicate (var-deps->predicate var-deps)]
-    (if form
+    (cond
+      (empty? path) ;; only dynamic
+      `(~(var-deps->predicate var-deps) (~form))
+      form
       `(~(var-deps->predicate var-deps)
         (update-in ~path ~form))
+      :else
       `(~(var-deps->predicate var-deps)
         (update-in ~path ~(dynamic-forms->update-expr sub-forms))))))
 
 (defn dynamic-forms->update-expr [dynamic-forms]
-  (cond (empty? dynamic-forms) ;; only static
-        `identity
-        (= [] (:path (first dynamic-forms))) ;; only dynamic
-        (do
-          (assert (= 1 (count dynamic-forms)))
-          `(constantly ~(:form (first dynamic-forms))))
-        :else
-        (let [update-exprs (mapcat dynamic-form->update-expr dynamic-forms)]
-          `(fn [form#]
-             (cond-> form# ~@update-exprs)))))
+  (if (empty? dynamic-forms) ;; only static
+    `identity
+    (let [update-exprs (mapcat dynamic-form->update-expr dynamic-forms)]
+      `(fn [form#]
+         (cond-> form# ~@update-exprs)))))
 
 (comment
   (binding [*params-changed-sym* {'x 'x123 'y 'y234 'z 'z456}]
     (dynamic-forms->update-expr
-     '({:path [0 1] :var-deps #{x} :form x}
+     '({:path [0 1] :var-deps #{x} :form (constantly x)}
        {:path [2 0]
         :var-deps #{x y z}
         :sub-forms
-        ({:path [0] :var-deps #{x} :form x}
+        ({:path [0] :var-deps #{x} :form (constantly x)}
          {:path [1 0]
           :var-deps #{x y z}
           :sub-forms
-          ({:path [0] :var-deps #{x y} :form y}
-           {:path [1] :var-deps #{z} :form z})})})))
+          ({:path [0] :var-deps #{x y} :form (constantly y)}
+           {:path [1] :var-deps #{z} :form (constantly z)})})})))
   )
 
 (defn extract-params [params]
@@ -372,9 +376,10 @@
   (let [changed-bindings
         (mapcat (fn [param]
                   [(get params-changed-sym param)
-                   `(or (not (:params ~*cache-sym*))
-                        (not= ~param (get (:params ~*cache-sym*)
-                                          '~param)))])
+                   `(or (not (comp/safe-aget ~*cache-sym* "params"))
+                        (not= ~param
+                              (get (comp/safe-aget ~*cache-sym* "params")
+                                   '~param)))])
                 params)]
     `(let ~(vec changed-bindings) ~@body)))
 
@@ -416,43 +421,44 @@
                *cache-sym* (gensym "cache")]
        (let [[static update-expr] (compile-inc* content &env)]
          ;; The cache-sym is bound lexically and not dynamically, otherwise
-         ;; it could be an issue when a sub-component is called inside a
-         ;; lazy seq
+         ;; it could be an issue in presence of lazy evaluation because
+         ;; lazy evaluation and dynamic binding don't play well together
          `(let [~*cache-sym* (comp/new-dynamic-cache comp/*cache*)]
             ~(with-params-changed params params-changed-sym
-               `(comp/safe-aset
-                 ~*cache-sym* "params" ~(conj params-with-sym `hash-map))
                `(comp/make-static-cache
                  ~*cache-sym* ~*cache-static-counter*)
                `(let [result# (-> (comp/safe-aget
                                    ~*cache-sym* "prev-result")
                                   (or ~static)
                                   (~update-expr))]
+                  (comp/safe-aset
+                   ~*cache-sym* "params" ~(conj params-with-sym `hash-map))
                   (comp/safe-aset ~*cache-sym* "prev-result" result#)
                   (comp/clean-sub-cache ~*cache-sym*)
                   result#)))))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
-   {:keys [op local init name env children :as ast]}]
-  (cond
-    (and (= :var op)
-         (contains? tracked-vars name)
-         (identical? (get (:locals env) name)
-                     (get-in tracked-vars [name :env])))
-    (conj collected-vars ast)
-    (and (= :var op) local init)
-    (collect-input-var-deps tracked-vars collected-vars init)
-    (not (empty? children))
-    (->> (map (partial collect-input-var-deps tracked-vars collected-vars)
-              children)
-         (apply union))
-    :else collected-vars))
+   {:keys [op local init info env children] :as ast}]
+  (let [name (:name info)]
+    (cond
+      (and (= :var op)
+           (contains? tracked-vars name)
+           (identical? (get (:locals env) name)
+                       (get-in tracked-vars [name :env])))
+      (conj collected-vars ast)
+      (and (= :var op) local init)
+      (collect-input-var-deps tracked-vars collected-vars init)
+      (not (empty? children))
+      (->> (map (partial collect-input-var-deps tracked-vars collected-vars)
+                children)
+           (apply union))
+      :else collected-vars)))
 
 (defmethod emitter/emit* :var
   [{:keys [info env form] :as ast}]
   (let [used-vars (collect-input-var-deps *tracked-vars* #{} ast)]
-    (doseq [{:keys [name]} used-vars]
+    (doseq [{{name :name} :info} used-vars]
       (set! *tracked-vars*
             (assoc-in *tracked-vars* [name :is-used] true))))
   (emitter/var-emit ast))
