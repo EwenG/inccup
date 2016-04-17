@@ -2,7 +2,7 @@
   (:require [ewen.inccup.string.compiler-macros
              :refer [compile-html maybe-convert-raw-string]]
             [ewen.inccup.incremental.compiler-macros
-             :refer [compile-inc extract-params]]
+             :refer [compile-inc compile-inc-with-params extract-params]]
             [ewen.inccup.util
              :refer [default-output-format name-with-attributes cljs-env?
                      *html-mode* *output-format*]]))
