@@ -8,8 +8,6 @@
              :refer [*cache* init-cache clean-dynamic-array]])
   (require '[cljs.pprint :refer [pprint] :refer-macros [pp]])
 
-  (defhtml tt [x] [:e.rr {} [:p {} x]])
-  (defhtml tt [x] [:e.rr {} [:p.b x]])
   (defhtml tt [x y] [:e.rr {} [:p.a {:class x} y]])
 
   (defhtml tt [x] [:p {} x (html [:p])])
@@ -17,9 +15,7 @@
   (defhtml tt [x y] [:p {} x (html [:p {} y])])
 
   (defhtml tt2 [x] [:p {} x])
-  (defhtml tt [x] [:p {} x (tt2 3)])
-
-  (defhtml tt [x y] [x y])
+  (defhtml tt [x y] [:p {} x (tt2 y)])
 
   (defhtml tt [x] [:p {} (for [y ["a" x]]
                            [:div y])])
