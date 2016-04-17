@@ -13,20 +13,23 @@
 
 (deftest defhtml
   (testing "defhtml"
-    (is (= (def1 "e")
-           ["div" {:id "ii" :class "cc"} "e"]))
-    (is (= (def1 [:p])
-           ["div" {:id "ii" :class "cc"} [:p]]))
-    (is (= (def2 {:e "e"} [:p] "r")
-           ["div" {:id "ii", :class "cc", :e "e"} nil [:p] "r"]))
-    (is (= (def2 [:div] [:p] 3)
-           ["div" {:id "ii", :class "cc"} [:div] [:p] 3]))
-    (is (= (def3 'p#ii.cc {:e "e"} "t")
-           ["p" {:id "ii", :class "cc", :e "e"} nil "t"]))
-    (is (= (def3 'div {:f "f"} "t")
-           ["div" {:f "f"} nil "t"]))
-    (is (= (def3 'div.e [:p] "t")
-           ["div" {:class "e"} [:p] "t"]))))
+    (binding [*cache* (init-cache)]
+      (is (= (def1 "e")
+             ["div" {:id "ii" :class "cc"} "e"]))
+      (is (= (def1 [:p])
+             ["div" {:id "ii" :class "cc"} [:p]])))
+    (binding [*cache* (init-cache)]
+      (is (= (def2 {:e "e"} [:p] "r")
+             ["div" {:id "ii", :class "cc", :e "e"} nil [:p] "r"]))
+      (is (= (def2 [:div] [:p] 3)
+             ["div" {:id "ii", :class "cc"} [:div] [:p] 3])))
+    (binding [*cache* (init-cache)]
+      (is (= (def3 'p#ii.cc {:e "e"} "t")
+             ["p" {:id "ii", :class "cc", :e "e"} nil "t"]))
+      (is (= (def3 'div {:f "f"} "t")
+             ["div" {:f "f"} nil "t"]))
+      (is (= (def3 'div.e [:p] "t")
+             ["div" {:class "e"} [:p] "t"])))))
 
 (defhtml template2 [x] [:p {} x])
 (defhtml template1 [x y] [:p {} x (html [:p x]) (template2 y)])
@@ -37,13 +40,10 @@
     (reset! cache-seq [])
     (binding [*cache* (init-cache)]
       (let [res1 (template1 1 2)
-            _ (clean-dynamic-array *cache*)
             _ (swap! cache-seq conj (js->clj *cache*))
             res2 (template1 3 4)
-            _ (clean-dynamic-array *cache*)
             _ (swap! cache-seq conj (js->clj *cache*))
-            res3 (template1 3 4)
-            _ (clean-dynamic-array *cache*)]
+            res3 (template1 3 4)]
         (is (not= res1 res3))
         (is (identical? res2 res3))
         (is (identical? (get-in res1 [4 1]) (get-in res2 [4 1])))
@@ -62,7 +62,8 @@
                    "params" {x 2}
                    "prev-result" ["p" {} 2]}]}]
                "params" {x 1 y 2}
-               "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}]}
+               "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}]
+             "top-level" true}
             {"dynamic-counter" 0
              "dynamic-array"
              [{"sub-cache"
@@ -75,7 +76,8 @@
                    "params" {x 4}
                    "prev-result" ["p" {} 4]}]}]
                "params" {x 3 y 4}
-               "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]]}]}]))))))
+               "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]]}]
+             "top-level" true}]))))))
 
 (comment
   (run-tests 'ewen.inccup.incremental.core-test)

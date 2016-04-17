@@ -421,7 +421,7 @@
                *cache-sym* (gensym "cache")]
        (let [[static update-expr] (compile-inc* content &env)]
          ;; The cache-sym is bound lexically and not dynamically, otherwise
-         ;; it could be an issue in presence of lazy evaluation because
+         ;; it could be an issue in the presence of lazy evaluation because
          ;; lazy evaluation and dynamic binding don't play well together
          `(let [~*cache-sym* (comp/new-dynamic-cache comp/*cache*)]
             ~(with-params-changed params params-changed-sym

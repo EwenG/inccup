@@ -72,17 +72,32 @@ an element name."
      (when obj (aget obj k))))
 
 #?(:cljs
-   (defn init-cache []
-     (js-obj "dynamic-counter" 0
-             "dynamic-array" (array))))
+   (defn init-cache
+     ([] (init-cache true))
+     ([top-level?]
+      ;; The top-level field is used to clean the dynamic arrays
+      ;; of the top level component when it terminates its execution. It is
+      ;; useful because the dynamic arrays are cleaned by the previous
+      ;; components, but the top-level component has no previous component
+      (let [cache (js-obj "dynamic-counter" 0
+                          "dynamic-array" (array))]
+        (when top-level? (aset cache "top-level" true))
+        cache))))
 
 #?(:cljs
    (defn new-dynamic-cache [cache]
      (when cache
        (let [dynamic-counter (aget cache "dynamic-counter")
+             ;; The dynamic counter of the top level component will never
+             ;; be more than one. We don't increment it. It avoids the need
+             ;; to clean it. Cleaning it is tricky because the top-level
+             ;; component has no predecessor and dynamic array is cleaned
+             ;; by the parent component.
+             is-top-level? (aget cache "top-level")
              current-cache (-> (aget cache "dynamic-array")
                                (aget dynamic-counter))]
-         (aset cache "dynamic-counter" (inc dynamic-counter))
+         (when-not is-top-level?
+           (aset cache "dynamic-counter" (inc dynamic-counter)))
          (or current-cache
              (let [new-cache (js-obj "sub-cache" (array))]
                (.push (aget cache "dynamic-array") new-cache)
@@ -122,7 +137,7 @@ an element name."
        (let [sub-cache (aget cache "sub-cache")]
          (when (not= static-counter (count sub-cache))
            (dotimes [_ static-counter]
-             (.push sub-cache (init-cache))))))))
+             (.push sub-cache (init-cache false))))))))
 
 (comment
   (merge-shortcut-attributes (with-meta {:f "e"}
