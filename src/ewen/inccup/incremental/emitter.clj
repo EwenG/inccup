@@ -20,7 +20,7 @@
           (map emit* vals)))
 
 (defmethod emit* :list
-  [{:keys [items]}] (map emit* items))
+  [{:keys [items]}] (doall (map emit* items)))
 
 (defmethod emit* :set
   [{:keys [items]}] (into #{} (map emit* items)))
@@ -42,7 +42,7 @@
   (into (list (emit* ret)) (map emit* statements)))
 
 (defn invoke-emit [{:keys [f args] :as ast}]
-  (conj (map emit* args) (emit* f)))
+  (conj (doall (map emit* args)) (emit* f)))
 
 (defmethod emit* :let
   [{:keys [bindings expr] :as ast}]
@@ -97,7 +97,7 @@
 (defmethod emit* :new
   [{:keys [ctor args] :as ast}]
   `(~(symbol (str (emit* ctor) "."))
-    ~@(map emit* args)))
+    ~@(doall (map emit* args))))
 
 (defmethod emit* :loop
   [{:keys [bindings expr] :as ast}]
@@ -109,7 +109,7 @@
 
 (defmethod emit* :recur
   [{:keys [exprs] :as ast}]
-  `(recur ~@(map emit* exprs)))
+  `(recur ~@(doall (map emit* exprs))))
 
 (defmethod emit* :letfn
   [{:keys [bindings expr] :as ast}]
@@ -124,7 +124,7 @@
 
 (defmethod emit* :dot
   [{:keys [target method args] :as ast}]
-  `(~(symbol (str "." method)) ~(emit* target) ~@(map emit* args)))
+  `(~(symbol (str "." method)) ~(emit* target) ~@(doall (map emit* args))))
 
 (defmethod emit* :throw
   [{:keys [throw] :as ast}]
