@@ -402,40 +402,43 @@
     content))
 
 (defmacro compile-inc-with-params [content params]
-   (let [params-with-sym (interleave (map #(list 'quote %) params) params)
-         params-changed-sym (zipmap params (map #(gensym (name %)) params))
-         tracked-vars
-         (loop [tracked-vars {}
-                params params]
-           (if-let [param (first params)]
-             (do (assert (contains? (:locals &env) param))
-                 (recur (assoc tracked-vars param
-                               {:env (get (:locals &env) param)
-                                :is-used false
-                                :symbol param})
-                        (rest params)))
-             tracked-vars))]
-     (binding [*tracked-vars* tracked-vars
-               *params-changed-sym* params-changed-sym
-               *cache-static-counter* 0
-               *cache-sym* (gensym "cache")]
-       (let [[static update-expr] (compile-inc* content &env)]
-         ;; The cache-sym is bound lexically and not dynamically, otherwise
-         ;; it could be an issue in the presence of lazy evaluation because
-         ;; lazy evaluation and dynamic binding don't play well together
-         `(let [~*cache-sym* (comp/new-dynamic-cache comp/*cache*)]
-            ~(with-params-changed params params-changed-sym
-               `(comp/make-static-cache
-                 ~*cache-sym* ~*cache-static-counter*)
-               `(let [result# (-> (comp/safe-aget
-                                   ~*cache-sym* "prev-result")
-                                  (or ~static)
-                                  (~update-expr))]
-                  (comp/safe-aset
-                   ~*cache-sym* "params" ~(conj params-with-sym `hash-map))
-                  (comp/safe-aset ~*cache-sym* "prev-result" result#)
-                  (comp/clean-sub-cache ~*cache-sym*)
-                  result#)))))))
+  (let [params-with-sym (interleave (map #(list 'quote %) params) params)
+        params-changed-sym (zipmap params (map #(gensym (name %)) params))
+        tracked-vars
+        (loop [tracked-vars {}
+               params params]
+          (if-let [param (first params)]
+            (do (assert (contains? (:locals &env) param))
+                (recur (assoc tracked-vars param
+                              {:env (get (:locals &env) param)
+                               :is-used false
+                               :symbol param})
+                       (rest params)))
+            tracked-vars))]
+    (binding [*tracked-vars* tracked-vars
+              *params-changed-sym* params-changed-sym
+              *cache-static-counter* 0
+              *cache-sym* (gensym "cache")]
+      (let [[static update-expr] (compile-inc* content &env)]
+        ;; The cache-sym is bound lexically and not dynamically, otherwise
+        ;; it could be an issue in the presence of lazy evaluation because
+        ;; lazy evaluation and dynamic binding don't play well together
+        `(let [~*cache-sym* (or (comp/new-dynamic-cache
+                                 comp/*implicit-param*)
+                                comp/*cache*)]
+           ~(with-params-changed params params-changed-sym
+              `(comp/make-static-cache
+                ~*cache-sym* ~*cache-static-counter*)
+              `(let [result# (-> (comp/safe-aget
+                                  ~*cache-sym* "prev-result")
+                                 (or ~static)
+                                 (~update-expr))]
+                 (comp/safe-aset
+                  ~*cache-sym* "params" ~(conj params-with-sym `hash-map))
+                 (comp/safe-aset ~*cache-sym* "prev-result" result#)
+                 (comp/clean-sub-cache ~*cache-sym*)
+                 (set! comp/*implicit-param* nil)
+                 result#)))))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
@@ -469,10 +472,11 @@
     (if is-defhtml?
       (do
         (set! *cache-static-counter* (inc *cache-static-counter*))
-        `(binding [comp/*cache* (comp/get-static-cache
-                                 ~*cache-sym*
-                                 ~(dec *cache-static-counter*))]
-           ~(emitter/invoke-emit ast)))
+        `(do
+           (set! comp/*implicit-param*
+                 (comp/get-static-cache
+                  ~*cache-sym* ~(dec *cache-static-counter*)))
+             ~(emitter/invoke-emit ast)))
       (emitter/invoke-emit ast))))
 
 (comment
@@ -485,11 +489,4 @@
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])
-
-  (binding [*dynamic-forms* #{}]
-    (compile-element '[:e {} [:p {} x]] []))
-
-  (binding [*cache-static-counter* 0]
-    (let [x "c"]
-      (compile-inc '[:e {} [:p {} x]])))
  )

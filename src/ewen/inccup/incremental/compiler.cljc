@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]))
 
 (def ^:dynamic *cache* nil)
+#?(:cljs (def ^:dynamic *implicit-param* nil))
 
 (def ^{:doc "Regular expression that parses a CSS-style id and class from
 an element name."
@@ -72,17 +73,21 @@ an element name."
      (when obj (aget obj k))))
 
 #?(:cljs
-   (defn init-cache
-     ([] (init-cache true))
-     ([top-level?]
-      ;; The top-level field is used to clean the dynamic arrays
-      ;; of the top level component when it terminates its execution. It is
-      ;; useful because the dynamic arrays are cleaned by the previous
-      ;; components, but the top-level component has no previous component
-      (let [cache (js-obj "dynamic-counter" 0
-                          "dynamic-array" (array))]
-        (when top-level? (aset cache "top-level" true))
-        cache))))
+   (defn init-cache []
+     ;; The top-level field is used to clean the dynamic arrays
+     ;; of the top level component when it terminates its execution. It is
+     ;; useful because the dynamic arrays are cleaned by the previous
+     ;; components, but the top-level component has no previous component
+     (js-obj "sub-cache" (array) "top-level" true)))
+
+#?(:cljs
+   (defn init-cache* []
+     ;; The top-level field is used to clean the dynamic arrays
+     ;; of the top level component when it terminates its execution. It is
+     ;; useful because the dynamic arrays are cleaned by the previous
+     ;; components, but the top-level component has no previous component
+     (js-obj "dynamic-counter" 0
+             "dynamic-array" (array))))
 
 #?(:cljs
    (defn new-dynamic-cache [cache]
@@ -137,7 +142,7 @@ an element name."
        (let [sub-cache (aget cache "sub-cache")]
          (when (not= static-counter (count sub-cache))
            (dotimes [_ static-counter]
-             (.push sub-cache (init-cache false))))))))
+             (.push sub-cache (init-cache*))))))))
 
 (comment
   (merge-shortcut-attributes (with-meta {:f "e"}
