@@ -77,22 +77,22 @@
              "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]]}])))))
 
   #_(testing "dynamic-cache"
-    (binding [*cache* (init-cache)]
-      (reset! cache-seq [])
-      (let [res1 (template3 [1 2])
-            _ (prn res1)
-            _ (swap! cache-seq conj (js->clj *cache*))
-            res2 (template3 [1 2])
-            _ (prn res2)
-            res3 (template3 [1 2 3])
-            _ (prn res3)
-            _ (swap! cache-seq conj (js->clj *cache*))
-            res4 (template3 [6])
-            _ (prn res4)
-            _ (swap! cache-seq conj (js->clj *cache*))]
-        (identical? res1 res2)
-        (is (not= res1 res3 res4))
-        (prn @cache-seq)))))
+      (binding [*cache* (init-cache)]
+        (reset! cache-seq [])
+        (let [res1 (template3 [1 2])
+              _ (prn res1)
+              _ (swap! cache-seq conj (js->clj *cache*))
+              res2 (template3 [1 2])
+              _ (prn res2)
+              res3 (template3 [1 2 3])
+              _ (prn res3)
+              _ (swap! cache-seq conj (js->clj *cache*))
+              res4 (template3 [6])
+              _ (prn res4)
+              _ (swap! cache-seq conj (js->clj *cache*))]
+          (identical? res1 res2)
+          (is (not= res1 res3 res4))
+          (prn @cache-seq)))))
 
 
 

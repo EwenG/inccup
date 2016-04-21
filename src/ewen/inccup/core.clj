@@ -2,7 +2,9 @@
   (:require [ewen.inccup.string.compiler-macros
              :refer [compile-html maybe-convert-raw-string]]
             [ewen.inccup.incremental.compiler-macros
-             :refer [compile-inc compile-inc-with-params extract-params]]
+             :refer [compile-inc compile-inc-with-params extract-params
+                     maybe-add-env-local *cache-static-counter*]]
+            [ewen.inccup.incremental.compiler :as inc-comp]
             [ewen.inccup.util
              :refer [default-output-format name-with-attributes cljs-env?
                      *html-mode* *output-format*]]))
@@ -47,9 +49,15 @@
         [{:keys [mode output-format]} content] (options-with-content
                                                 options-content &env)]
     (cond (= :inccup output-format)
-          (let [params (extract-params args)]
-            `(defn ~name ~args
-               (compile-inc-with-params ~content ~params)))
+          (let [params (extract-params args)
+                update-fn-sym (gensym "update-fn")]
+            (binding [*cache-static-counter* 0]
+              `(let ~(compile-inc-with-params
+                      &env content params update-fn-sym)
+                 (defn ~name ~args
+                   (inc-comp/inccupdate
+                    ~update-fn-sym (cljs.core/array ~@params)
+                    ~(count params) ~*cache-static-counter*)))))
           mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]

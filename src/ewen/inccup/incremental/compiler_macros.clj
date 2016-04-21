@@ -6,6 +6,8 @@
             [clojure.set :refer [union]]))
 
 (def ^:dynamic *cache-sym* nil)
+(def ^:dynamic *cache-param-sym* nil)
+(def ^:dynamic *prev-cache-param-sym* nil)
 (def ^:dynamic *cache-static-counter* nil)
 (def ^:dynamic *params-changed-sym* nil)
 (def ^:dynamic *dynamic-forms* nil)
@@ -333,8 +335,7 @@
   (if (empty? dynamic-forms) ;; only static
     `identity
     (let [update-exprs (mapcat dynamic-form->update-expr dynamic-forms)]
-      `(fn [form#]
-         (cond-> form# ~@update-exprs)))))
+      `(cond-> ~@update-exprs))))
 
 (comment
   (binding [*params-changed-sym* {'x 'x123 'y 'y234 'z 'z456}]
@@ -358,7 +359,7 @@
                   (swap! extracted conj x))
                 x)
               params)
-    @extracted))
+    (vec @extracted)))
 
 (comment
   (extract-params '[{:e r :as rr} y & others])
@@ -371,17 +372,6 @@
           [(compile-dispatch content []) *dynamic-forms*])
         update-expr (dynamic-forms->update-expr dynamic)]
     [static update-expr]))
-
-(defn with-params-changed [params params-changed-sym & body]
-  (let [changed-bindings
-        (mapcat (fn [param]
-                  [(get params-changed-sym param)
-                   `(or (not (comp/safe-aget ~*cache-sym* "params"))
-                        (not= ~param
-                              (get (comp/safe-aget ~*cache-sym* "params")
-                                   '~param)))])
-                params)]
-    `(let ~(vec changed-bindings) ~@body)))
 
 (defmacro compile-inc [content]
   (if *cache-static-counter*
@@ -401,7 +391,7 @@
     ;; caching
     content))
 
-(defmacro compile-inc-with-params [content params]
+#_(defmacro compile-inc-with-params [content params]
   (let [params-with-sym (interleave (map #(list 'quote %) params) params)
         params-changed-sym (zipmap params (map #(gensym (name %)) params))
         tracked-vars
@@ -418,7 +408,9 @@
     (binding [*tracked-vars* tracked-vars
               *params-changed-sym* params-changed-sym
               *cache-static-counter* 0
-              *cache-sym* (gensym "cache")]
+              *cache-sym* (gensym "cache")
+              *cache-param-sym* (gensym "cache-param")
+              *prev-cache-param-sym* (gensym "prev-cache-param")]
       (let [[static update-expr] (compile-inc* content &env)]
         ;; The cache-sym is bound lexically and not dynamically, otherwise
         ;; it could be an issue in the presence of lazy evaluation because
@@ -439,6 +431,30 @@
                  (comp/clean-sub-cache ~*cache-sym*)
                  (set! comp/*implicit-param* nil)
                  result#)))))))
+
+(defn compile-inc-with-params [env content params update-fn-sym]
+  (let [env (reduce maybe-add-env-local env params)
+        tracked-vars (loop [tracked-vars {}
+                            params params]
+                       (if-let [param (first params)]
+                         (do (assert (contains? (:locals env) param))
+                             (recur (assoc tracked-vars param
+                                           {:env (get (:locals env) param)
+                                            :is-used false
+                                            :symbol param})
+                                    (rest params)))
+                         tracked-vars))
+        *cache-sym* (gensym "cache")]
+    (binding [*tracked-vars* tracked-vars
+              *cache-sym* (gensym "cache")
+              *params-changed-sym* (zipmap params (map gensym params))
+              *cache-param-sym* (gensym "cache-param")
+              *prev-cache-param-sym* (gensym "prev-cache-param")]
+      (let [[static update-expr] (compile-inc* content env)]
+        [update-fn-sym `(fn [~*cache-sym* ~@params ~@*params-changed-sym*]
+                          (-> (comp/safe-aget ~*cache-sym* "prev-result")
+                              (or ~static)
+                              ~update-expr))]))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
@@ -490,3 +506,49 @@
 (comment
   (require '[clojure.pprint :refer [pprint pp]])
  )
+
+
+#_(let*
+ [cache13378
+  (clojure.core/or
+   (ewen.inccup.incremental.compiler/new-dynamic-cache
+    ewen.inccup.incremental.compiler/*implicit-param*)
+   ewen.inccup.incremental.compiler/*cache*)]
+ (clojure.core/let
+  [x13377
+   (clojure.core/or
+    (clojure.core/not
+     (ewen.inccup.incremental.compiler/safe-aget cache13378 "params"))
+    (clojure.core/not=
+     x
+     (clojure.core/get
+      (ewen.inccup.incremental.compiler/safe-aget cache13378 "params")
+      'x)))]
+  (ewen.inccup.incremental.compiler/make-static-cache cache13378 0)
+  (clojure.core/let
+   [result__13330__auto__
+    (clojure.core/->
+     (ewen.inccup.incremental.compiler/safe-aget
+      cache13378
+      "prev-result")
+     (clojure.core/or
+      (clojure.core/with-meta
+       ["div" {:id "ii", :class "cc"} nil]
+       (cljs.core/js-obj "dom-node" nil)))
+     ((clojure.core/fn
+       [form__13308__auto__]
+       (clojure.core/cond->
+        form__13308__auto__
+        x13377
+        (clojure.core/update-in [2] (clojure.core/constantly x))))))]
+   (ewen.inccup.incremental.compiler/safe-aset
+    cache13378
+    "params"
+    (clojure.core/hash-map 'x x))
+   (ewen.inccup.incremental.compiler/safe-aset
+    cache13378
+    "prev-result"
+    result__13330__auto__)
+   (ewen.inccup.incremental.compiler/clean-sub-cache cache13378)
+   (set! ewen.inccup.incremental.compiler/*implicit-param* nil)
+   result__13330__auto__)))

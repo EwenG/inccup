@@ -144,6 +144,35 @@ an element name."
            (dotimes [_ static-counter]
              (.push sub-cache (init-cache*))))))))
 
+#?(:cljs
+   (defn compute-update-fn-params [cache params prev-params params-nb]
+     (let [update-fn-params (array)]
+       (.push update-fn-params cache)
+       (dotimes [i params]
+         (.push update-fn-params (aget params i)))
+       (if prev-params
+         (dotimes [i params]
+           (.push update-fn-params
+                  (not= (aget params i) (aget prev-params i))))
+         (dotimes [i params]
+           (.push update-fn-params true)))
+       update-fn-params)))
+
+#?(:cljs
+   (defn inccupdate
+     [update-fn params params-nb cache-static-counter]
+     (let [cache (or (new-dynamic-cache *implicit-param*) *cache*)
+           prev-params (safe-aget cache "params")
+           update-fn-params (compute-update-fn-params
+                             cache params prev-params params-nb)
+           _ (make-static-cache cache cache-static-counter)
+           result (apply update-fn update-fn-params)]
+       (safe-aset cache "params" params)
+       (safe-aset cache "prev-result" result)
+       (clean-sub-cache cache)
+       (set! *implicit-param* nil)
+       result)))
+
 (comment
   (merge-shortcut-attributes (with-meta {:f "e"}
                                {::map-attrs {:g "g"}})
