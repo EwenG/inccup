@@ -23,12 +23,10 @@
    :shadow nil
    :local true})
 
-(defn maybe-add-env-local [{:keys [locals] :as env} sym]
-  (if (get locals sym)
-    env
-    (update-in env [:locals]
-               assoc sym
-               (new-local-binding sym env))))
+(defn add-local-in-env [{:keys [locals] :as env} sym]
+  (update-in env [:locals]
+             assoc sym
+             (new-local-binding sym env)))
 
 (defn track-vars [expr]
   (binding [*tracked-vars* *tracked-vars*]
@@ -38,7 +36,7 @@
           ;; already there. This is useful because the macro-expansion
           ;; order is inverted by the call to the analyzer and emitter
           ;; and thus, the wrapping let forms are not analyzed.
-          env (reduce maybe-add-env-local
+          env (reduce add-local-in-env
                       (or *env* (ana-api/empty-env))
                       (into [*cache-sym*] (vals *params-changed-sym*)))
           cljs-expanded (-> env (ana-api/analyze expr) emitter/emit*)
@@ -65,7 +63,7 @@
 
 (defn compile-dynamic-expr [expr path]
   (let [[expr used-vars] (track-vars expr)]
-    (update-dynamic-forms `(constantly ~expr) path used-vars)
+    (update-dynamic-forms expr path used-vars)
     nil))
 
 (defn compile-attr-map
@@ -264,15 +262,21 @@
 
 (defn group-dynamic-forms [dynamic-forms]
   {:pre [(not (empty? dynamic-forms))]}
-  (let [partitioned (partition-by (comp first :path) dynamic-forms)]
-    (for [forms partitioned]
-      (if (= 1 (count forms))
-        (first forms)
-        (let [[common-path var-deps] (compute-common-path forms)
-              n (count common-path)
-              updated-forms (map (partial remove-from-path n) forms)]
-          {:path common-path :var-deps var-deps
-           :sub-forms (group-dynamic-forms updated-forms)})))))
+  (let [partitioned (partition-by (comp first :path) dynamic-forms)
+        forms (for [forms partitioned]
+                (if (= 1 (count forms))
+                  (first forms)
+                  (let [[common-path var-deps] (compute-common-path forms)
+                        n (count common-path)
+                        updated-forms (map
+                                       (partial remove-from-path n)
+                                       forms)]
+                    {:path common-path :var-deps var-deps
+                     :sub-forms (group-dynamic-forms updated-forms)})))]
+    (if (> (count forms) 1)
+      (let [var-deps (apply union (map :var-deps forms))]
+        {:path [] :var-deps var-deps :sub-forms forms})
+      (first forms))))
 
 (comment
   (compute-common-path [{:path [2 0 0]
@@ -282,28 +286,38 @@
                         {:path [2 0 1 0 1]
                          :var-deps #{1 2}}])
 
+  (group-dynamic-forms '[{:path [2 0 0]
+                          :var-deps #{x}
+                          :form x}
+                         {:path [2 0 1 0 0]
+                          :var-deps #{x y}
+                          :form #(update-in % y)}
+                         {:path [2 0 1 0 1]
+                          :var-deps #{z}
+                          :form z}])
+
   (group-dynamic-forms '[{:path [0 1]
                           :var-deps #{x}
-                          :form (constantly x)}
+                          :form x}
                          {:path [2 0 0]
                           :var-deps #{x}
-                          :form (constantly x)}
+                          :form x}
                          {:path [2 0 1 0 0]
                           :var-deps #{x y}
-                          :form #(update-in % (constantly y))}
+                          :form #(update-in % y)}
                          {:path [2 0 1 0 1]
                           :var-deps #{z}
-                          :form (constantly z)}])
+                          :form z}])
 
   ;; Should throw an error
-  (group-dynamic-forms '[{:path [0 1] :var-deps #{x} :form (constantly x)}
-                         {:path [2 0 1] :var-deps #{x} :form (constantly x)}
+  (group-dynamic-forms '[{:path [0 1] :var-deps #{x} :form x}
+                         {:path [2 0 1] :var-deps #{x} :form x}
                          {:path [2 0 1 0 0]
                           :var-deps #{x y}
-                          :form (constantly y)}
+                          :form y}
                          {:path [2 0 1 0 1]
                           :var-deps #{z}
-                          :form (constantly z)}])
+                          :form z}])
   )
 
 (declare dynamic-forms->update-expr)
@@ -317,7 +331,57 @@
                   (first preds)
                   `(or ~@preds)))))
 
-(defn dynamic-form->update-expr [{:keys [path var-deps form sub-forms]}]
+(defn dynamic-forms->update-path
+  [{:keys [path var-deps sub-forms form]}]
+  (if (empty? sub-forms)
+    (list path)
+    (conj (map dynamic-forms->update-path sub-forms) path)))
+
+(defn dynamic-forms->skips
+  [{:keys [path var-deps sub-forms form]}]
+  (if (empty? sub-forms)
+    [2 0]
+    (let [next-skips (map dynamic-forms->skips sub-forms)
+          next-firsts (map first next-skips)]
+      (into [(+ (apply + next-firsts) 1)]
+            (apply concat next-skips)))))
+
+(defn dynamic-forms->preds-and-exprs
+  [{:keys [path var-deps sub-forms form]}]
+  (if (empty? sub-forms)
+    [(var-deps->predicate var-deps) form]
+    (into [(var-deps->predicate var-deps)]
+          (mapcat dynamic-forms->preds-and-exprs sub-forms))))
+
+(comment
+  (binding [*params-changed-sym* {'x 'x123}]
+    (let [dyn-forms
+          '{:path [2 0],
+            :var-deps #{x},
+            :form x}]
+      [(dynamic-forms->update-path dyn-forms)
+       (dynamic-forms->skips dyn-forms)
+       (dynamic-forms->preds-and-exprs dyn-forms)]))
+
+  (binding [*params-changed-sym* {'x 'x123 'y 'y234 'z 'z456}]
+    (let [dyn-forms
+          '{:path [2 0],
+            :var-deps #{x y z},
+            :sub-forms
+            ({:path [0], :var-deps #{x}, :form x}
+             {:path [1 0],
+              :var-deps #{x y z},
+              :sub-forms
+              ({:path [0],
+                :var-deps #{x y},
+                :form (fn* [p1__11076#] (update-in p1__11076# y))}
+               {:path [1], :var-deps #{z}, :form z})})}]
+      [(dynamic-forms->update-path dyn-forms)
+       (dynamic-forms->skips dyn-forms)
+       (dynamic-forms->preds-and-exprs dyn-forms)]))
+  )
+
+#_(defn dynamic-form->update-expr [{:keys [path var-deps form sub-forms]}]
   {:pre [(or (and form (nil? sub-forms))
              (and (nil? form) sub-forms))]}
   (let [predicate (var-deps->predicate var-deps)]
@@ -331,13 +395,13 @@
       `(~(var-deps->predicate var-deps)
         (update-in ~path ~(dynamic-forms->update-expr sub-forms))))))
 
-(defn dynamic-forms->update-expr [dynamic-forms]
+#_(defn dynamic-forms->update-expr [dynamic-forms]
   (if (empty? dynamic-forms) ;; only static
     `identity
     (let [update-exprs (mapcat dynamic-form->update-expr dynamic-forms)]
       `(cond-> ~@update-exprs))))
 
-(comment
+#_(comment
   (binding [*params-changed-sym* {'x 'x123 'y 'y234 'z 'z456}]
     (dynamic-forms->update-expr
      '({:path [0 1] :var-deps #{x} :form (constantly x)}
@@ -369,9 +433,14 @@
   (let [[static dynamic]
         (binding [*env* env
                   *dynamic-forms* []]
-          [(compile-dispatch content []) *dynamic-forms*])
-        update-expr (dynamic-forms->update-expr dynamic)]
-    [static update-expr]))
+          [(compile-dispatch content []) *dynamic-forms*])]
+    (if (empty? dynamic)
+      [static]
+      (let [dyn-forms (group-dynamic-forms dynamic)
+            update-path (dynamic-forms->update-path dyn-forms)
+            skips (dynamic-forms->skips dyn-forms)
+            preds-and-exprs (dynamic-forms->preds-and-exprs dyn-forms)]
+        [static update-path skips preds-and-exprs]))))
 
 (defmacro compile-inc [content]
   (if *cache-static-counter*
@@ -433,7 +502,7 @@
                  result#)))))))
 
 (defn compile-inc-with-params [env content params update-fn-sym]
-  (let [env (reduce maybe-add-env-local env params)
+  (let [env (reduce add-local-in-env env params)
         tracked-vars (loop [tracked-vars {}
                             params params]
                        (if-let [param (first params)]
@@ -450,11 +519,25 @@
               *params-changed-sym* (zipmap params (map gensym params))
               *cache-param-sym* (gensym "cache-param")
               *prev-cache-param-sym* (gensym "prev-cache-param")]
-      (let [[static update-expr] (compile-inc* content env)]
-        [update-fn-sym `(fn [~*cache-sym* ~@params ~@*params-changed-sym*]
-                          (-> (comp/safe-aget ~*cache-sym* "prev-result")
-                              (or ~static)
-                              ~update-expr))]))))
+      (let [[static update-path skips preds-and-exprs]
+            (compile-inc* content env)]
+        (if (nil? update-path)
+          `[~update-fn-sym (fn [~*cache-sym* ~@params
+                                ~@(vals *params-changed-sym*)]
+                             (or (comp/safe-aget
+                                  ~*cache-sym* "prev-result")
+                                 ~static))]
+          `[skips# ~skips
+            update-path# (quote ~update-path)
+            ~update-fn-sym (fn [~*cache-sym* ~@params
+                                ~@(vals *params-changed-sym*)]
+                             (-> (comp/safe-aget
+                                  ~*cache-sym* "prev-result")
+                                 (or ~static)
+                                 (comp/assoc-in-tree
+                                  update-path# skips#
+                                  (cljs.core/array
+                                   ~@preds-and-exprs))))])))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
