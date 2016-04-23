@@ -144,15 +144,17 @@ an element name."
                             preds-and-forms counter assoc))
       (if paths
         (do (vswap! counter inc)
-            (->> (loop [sub-tree (transient (get tree index))
-                        [path & r-paths] paths]
-                   (if path
-                     (recur
-                      (assoc-in-tree* sub-tree path skips
-                                      preds-and-forms counter assoc!)
-                      r-paths)
-                     (persistent! sub-tree)))
-                 (assoc-fn tree index)))
+            (cond->> (loop [sub-tree (transient (if index
+                                                  (get tree index)
+                                                  tree))
+                            [path & r-paths] paths]
+                       (if path
+                         (recur
+                          (assoc-in-tree* sub-tree path skips
+                                          preds-and-forms counter assoc!)
+                          r-paths)
+                         (persistent! sub-tree)))
+              index (assoc-fn tree index)))
         (let [c (dec (vswap! counter + 2))]
           (assoc-fn tree index (aget preds-and-forms c)))))
     (do
@@ -165,10 +167,10 @@ an element name."
 (comment
 
   (assoc-in-tree
-   '[:div {} [nil 3] [[nil] nil]]
-   '([2 0])
-   '[2 0]
-   #js ['x123 'x])
+   '["p" {} nil]
+   '([] ([1]) ([2]))
+   '[5 2 0 2 0]
+   #js [true true 'x true 'y])
 
   (let [ee '[:div {} [[nil [[nil 6]]]]]]
     (identical?
@@ -178,6 +180,12 @@ an element name."
               '([2 0] ([0]) ([1 0] ([0]) ([1])) ([2] ([0]) ([1])))
               '[8 2 0 5 2 0 2 0]
               #js [true true 'x false true 'y true 'z]) [2 0 1])))
+
+  (assoc-in-tree
+   '["p" {} nil]
+   '([] ([1]) ([2]))
+   '[5 2 0 2 0]
+   #js ['x123 'x 'y123 'y])
 
   )
 
@@ -207,6 +215,16 @@ an element name."
    (clean-sub-cache cache)
    (set! *implicit-param* nil)
    result))
+
+(defn update-with-cache [static cache static-counter update-path
+                         skips preds-and-exprs]
+  (let [cache (get-static-cache cache static-counter)
+        cache (new-dynamic-cache cache)
+        result (-> (safe-aget cache "prev-result")
+                   (or static)
+                   (assoc-in-tree update-path skips preds-and-exprs))]
+    (safe-aset cache "prev-result" result)
+    result))
 
 (comment
   (merge-shortcut-attributes (with-meta {:f "e"}
