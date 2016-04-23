@@ -1,9 +1,13 @@
 (ns ewen.inccup.incremental.compiler-macros
-  (:require [ewen.inccup.incremental.compiler :as comp]
-            [ewen.inccup.incremental.emitter :as emitter]
+  (:require [ewen.inccup.incremental.emitter :as emitter]
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]))
+
+(create-ns 'ewen.inccup.incremental.compiler)
+(alias 'comp 'ewen.inccup.incremental.compiler)
+(doseq [v ['unevaluated? 'normalize-element]]
+  (intern 'ewen.inccup.incremental.compiler v))
 
 (def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-static-counter* nil)
