@@ -11,7 +11,9 @@ The static object contains:
 - The last function result (a tree of inccup forms)
 - An array containing all sub caches of all sub components
 
-When compiling hiccup forms, a new static cache object is created for every use of the html macro or use of a function defined with the defhtml macro. The number of static cache object is computed at macro expansion time. When calling a function defined with the defhtml macro, the cache object is passed to the underlying sub component by dynamically binding it.
+When compiling hiccup forms, a new static cache object is created for every use of the html macro or use of a function defined with the defhtml macro. The number of static cache object is computed at macro expansion time. When calling a function defined with the defhtml macro, the cache object is passed to the underlying sub component by dynamically binding it during the call to the defhtml function. The defhtml function then lexically binds it. During the call to the defhtml function, their is no lazy eval so dynamic binding is safe. Inside the body of the defhtml function, their may be lazy eval so dynamic binding is unsafe. The *cache* object is used to pass the cache down the tree. When receiving the *cache* var from a downstream component, one must immediately rebind it because *cache* is mutable and may be modified at any moment by a component through lazy eval.
+
+Don't try to print the cache inside functions that compute the cache. The cache may contain lazy seqs, the realization of lazy seq may need to run the functions that print the cache -> cyclic dependency !
 
 * Children reconciliation
 
@@ -21,3 +23,5 @@ Add a special keyword parameter to defhtmls. When a child is passed an ID, it is
 
 When outputting datastructures, inccup treats all tags as container tags,
 and never as void tags. This makes the ::default compilation strategy much simpler. It is the responsability of the caller to remove the content of void tags if needed.
+* Code analysis
+The code is analyzed in order to find which part of the defhtml function bodies depend on the defhtml function input parameters. The analyzed cljs AST is emitted using a customized emit* method. We could keep the code as it is written by the user but then macros would be expanded two times.
