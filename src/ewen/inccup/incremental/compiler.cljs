@@ -140,6 +140,36 @@
 
   )
 
+(defn copy-cache [cache]
+  (let [dyn-array (aget cache "dynamic-array")
+        first-dynamic (aget dyn-array 0)]
+    #js {"dynamic-counter" 0
+         "dynamic-array"
+         (if first-dynamic
+           #js [(let [new-sub-cache #js []]
+                  (doseq [sub-cache (aget first-dynamic "sub-cache")]
+                    (.push new-sub-cache (copy-cache sub-cache)))
+                  #js {"sub-cache" new-sub-cache
+                       "prev-result" (aget first-dynamic "prev-result")
+                       "params" (aget first-dynamic "params")})]
+           #js [])}))
+
+(comment
+
+  (copy-cache
+   #js {"dynamic-counter" 0
+        "dynamic-array"
+        #js [#js {"sub-cache"
+                  #js [#js {"dynamic-counter" 0
+                            "dynamic-array"
+                            #js [#js {"sub-cache" #js []
+                                      "prev-result" #js ["p" #js {} 1]
+                                      "params" #js [1]}]}]
+                  "prev-result" #js ["p" #js {} 1]
+                  "params" #js [1]}]})
+
+  )
+
 (defn compute-update-fn-params [cache params prev-params params-nb]
  (let [update-fn-params (array)]
    (.push update-fn-params cache)
