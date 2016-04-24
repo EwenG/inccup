@@ -6,26 +6,12 @@
 (def ^:dynamic *implicit-param* nil)
 (def ^:dynamic *tmp-val* nil)
 
-(defn merge-shortcut-attributes [attrs1 attrs2]
-  (let [attrs1-meta (meta attrs1)
-        map-attrs (::map-attrs attrs1-meta)
-        merged-attrs (merge-with
-                      #(cond (nil? %1) %2
-                             (util/unevaluated? %2) `(str ~%1 " " ~%2)
-                             :else (str %1 " " %2))
-                      map-attrs attrs2)]
-    (with-meta merged-attrs (assoc attrs1-meta ::shortcut-attrs attrs2))))
-
-(defn merge-map-attributes [attrs1 {:keys [id] :as attrs2}]
-  (let [attrs1-meta (meta attrs1)
-        shortcut-attrs (::shortcut-attrs attrs1-meta)
-        merged-attrs (merge-with
-                      #(cond (nil? %1) %2
-                             (util/unevaluated? %2) `(str ~%1 " " ~%2)
-                             :else (str %1 " " %2))
-                      shortcut-attrs attrs2)
-        merged-attrs (if id (assoc merged-attrs :id id) merged-attrs)]
-    (with-meta merged-attrs (assoc attrs1-meta ::map-attrs attrs2))))
+(defn maybe-merge-attributes [tag-attrs expr]
+  (let [tag-attrs (or tag-attrs *tmp-val*)]
+    (set! *tmp-val* expr)
+    (if (map? expr)
+      (util/merge-attributes tag-attrs *tmp-val* )
+      tag-attrs)))
 
 (defn safe-aset [obj k v]
  (when obj (aset obj k v)))

@@ -79,22 +79,18 @@
     attrs))
 
 (defn maybe-attr-map
-  ([attrs attr-path]
-   (maybe-attr-map attrs attr-path nil))
-  ([attrs attr-path path]
-   {:pred [(not (some util/unevaluated?
-                      (mapcat identity attrs)))]}
+  ([attrs attr-path path tag-attrs]
+   {:pred [(not (some util/unevaluated? (mapcat identity attrs)))]}
    (when attrs
      (let [[expr used-vars] (track-vars attrs)
            attr-form
-           `#(if (map? ~expr)
-               (ewen.inccup.incremental.compiler/merge-map-attributes
-                % ~expr)
-               (ewen.inccup.incremental.compiler/merge-map-attributes
-                % {}))
-           form (when path `#(if (map? ~expr) nil ~expr))]
+           `(ewen.inccup.incremental.compiler/maybe-merge-attributes
+             ~tag-attrs ~expr)
+           form `(if (map? ewen.inccup.incremental.compiler/*tmp-val*)
+                   nil
+                   ewen.inccup.incremental.compiler/*tmp-val*)]
        (update-dynamic-forms attr-form attr-path used-vars)
-       (when expr (update-dynamic-forms form path used-vars))
+       (update-dynamic-forms form path used-vars)
        nil))))
 
 (defn- literal?
@@ -108,18 +104,10 @@
   {:pred [(not (literal? tag))]}
   (let [[expr used-vars] (track-vars tag)
         tag-form
-        `#(let [[tag# ~'_ ~'_]
-                (util/normalize-element
-                 [~expr])]
-            tag#)
-        attr-form
-        `#(let [[~'_ tag-attrs# _]
-                (util/normalize-element
-                 [~expr])]
-            (ewen.inccup.incremental.compiler/merge-shortcut-attributes
-             % tag-attrs#))]
+        `(let [[tag# attrs#] (util/normalize-element [~expr])]
+           (set! ewen.inccup.incremental.compiler/*tmp-val* attrs#)
+           tag#)]
     (update-dynamic-forms tag-form tag-path used-vars)
-    (update-dynamic-forms attr-form attr-path used-vars)
     nil))
 
 (defn- form-name
@@ -215,21 +203,15 @@
 (defmethod compile-element ::literal-tag
   [[tag attrs & content :as element] path]
   (let [[tag tag-attrs [first-content & rest-content]]
-        (util/normalize-element element)
-        tag-attrs (if (map? tag-attrs)
-                    (vary-meta
-                     tag-attrs assoc
-                     :ewen.inccup.incremental.compiler/shortcut-attrs
-                     tag-attrs)
-                    tag-attrs)]
-    (maybe-attr-map first-content (conj path 1) (conj path 2))
+        (util/normalize-element element)]
+    (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
     (with-dom-node
       (into [tag tag-attrs nil] (compile-seq rest-content path 3)))))
 
 (defmethod compile-element ::default
   [[tag attrs & rest-content] path]
   (dynamic-tag tag (conj path 0) (conj path 1))
-  (maybe-attr-map attrs (conj path 1) (conj path 2))
+  (maybe-attr-map attrs (conj path 1) (conj path 2) nil)
   (if (nil? attrs)
     [nil {}]
     (with-dom-node
@@ -467,12 +449,13 @@
     (let [static-counter *cache-static-counter*]
       (set! *cache-static-counter* (inc *cache-static-counter*))
       (let [[static update-path skips preds-and-exprs]
-            (compile-inc* content &env)]
-        (if (nil? update-path)
-          content
-          (let [update-path-sym (gensym "update-path")
-                skips-sym (gensym "skips")
-                statics-sym (gensym "static")]
+            (compile-inc* content &env)
+            update-path-sym (gensym "update-path")
+            skips-sym (gensym "skips")
+            statics-sym (gensym "static")]
+        (if (nil? update-path) ;; literal content
+          `(or (safe-aget ~*cache-sym* "prev-result") '~statics-sym)
+          (do
             (set! *update-paths*
                   (into *update-paths* [update-path-sym `'~update-path]))
             (set! *skips* (into *skips* [skips-sym skips]))
@@ -499,14 +482,13 @@
                          tracked-vars))]
     (binding [*tracked-vars* tracked-vars
               *cache-sym* (gensym "cache")
-              *cache-static-counter* 0
               *params-changed-sym* (zipmap params (map gensym params))
               *update-paths* []
               *skips* []
               *statics* []]
       (let [[static update-path skips preds-and-exprs]
             (compile-inc* content env)]
-        (if (nil? update-path)
+        (if (nil? update-path) ;; literal content
           `[~update-fn-sym (fn [~*cache-sym* ~@params
                                 ~@(vals *params-changed-sym*)]
                              (or
