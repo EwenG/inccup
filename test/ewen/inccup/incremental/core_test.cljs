@@ -11,7 +11,7 @@
 (defhtml def2 [x y z] [:div#ii.cc x y z])
 (defhtml def3 [x y z] [x y z])
 
-(deftest defhtml
+(deftest test-defhtml
   (testing "defhtml"
     (binding [*cache* (init-cache)]
       (is (= (def1 "e")
@@ -36,7 +36,7 @@
 (defhtml template2 [x y] [:p {} x (html [:p x]) (template1 y)])
 (defhtml template3 [x] [:p {} (count x) (for [y x] (template1 y))])
 
-(deftest cache
+(deftest test-cache
   (testing "cache"
     (binding [*cache* (init-cache)]
       (reset! cache-seq [])
@@ -58,10 +58,10 @@
               {"dynamic-counter" 0
                "dynamic-array"
                [{"sub-cache" []
-                 "params" {x 2}
+                 "params" [2]
                  "prev-result" ["p" {} 2]}]}]
              "top-level" true
-             "params" {x 1 y 2}
+             "params" [1 2]
              "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}
             {"sub-cache"
              [{"dynamic-counter" 0
@@ -70,10 +70,10 @@
               {"dynamic-counter" 0
                "dynamic-array"
                [{"sub-cache" []
-                 "params" {x 4}
+                 "params" [4]
                  "prev-result" ["p" {} 4]}]}]
              "top-level" true
-             "params" {x 3 y 4}
+             "params" [3 4]
              "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]]}])))))
 
   #_(testing "dynamic-cache"
@@ -93,8 +93,6 @@
           (identical? res1 res2)
           (is (not= res1 res3 res4))
           (prn @cache-seq)))))
-
-
 
 
 
