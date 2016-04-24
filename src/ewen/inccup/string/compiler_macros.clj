@@ -3,13 +3,6 @@
   (:require [ewen.inccup.util :refer :all]
             [ewen.inccup.string.compiler :as comp]))
 
-(defn- unevaluated?
-  "True if the expression has not been evaluated."
-  [expr]
-  (or (symbol? expr)
-      (and (seq? expr)
-           (not= (first expr) `quote))))
-
 (defn compile-attr-map
   "Returns an unevaluated form that will render the supplied map as HTML
   attributes."

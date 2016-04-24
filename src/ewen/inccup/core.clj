@@ -3,8 +3,7 @@
              :refer [compile-html maybe-convert-raw-string]]
             [ewen.inccup.incremental.compiler-macros
              :refer [compile-inc compile-inc-with-params extract-params
-                     maybe-add-env-local *cache-static-counter*]]
-            [ewen.inccup.incremental.compiler :as inc-comp]
+                     *cache-static-counter*]]
             [ewen.inccup.util
              :refer [default-output-format name-with-attributes cljs-env?
                      *html-mode* *output-format*]]))
@@ -55,7 +54,7 @@
               `(let ~(compile-inc-with-params
                       &env content params update-fn-sym)
                  (defn ~name ~args
-                   (inc-comp/inccupdate
+                   (ewen.inccup.incremental.compiler/inccupdate
                     ~update-fn-sym (cljs.core/array ~@params)
                     ~(count params) ~*cache-static-counter*)))))
           mode

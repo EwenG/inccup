@@ -1,52 +1,17 @@
 (ns ewen.inccup.incremental.compiler
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [ewen.inccup.util :as util]))
 
 (def ^:dynamic *cache* nil)
 (def ^:dynamic *implicit-param* nil)
-
-(def ^{:doc "Regular expression that parses a CSS-style id and class from
-an element name."
-       :private true}
-  re-tag #"([^\s\.#]+)(?:#([^\s\.#]+))?(?:\.([^\s#]+))?")
-
-(defn unevaluated?
-  "True if the expression has not been evaluated."
-  [expr]
-  (or (symbol? expr)
-      (and (seq? expr)
-           (not= (first expr) `quote))))
-
-(defn merge-attributes [attrs1 {:keys [id] :as attrs2}]
-  (let [merged-attrs (merge-with
-                      #(cond (nil? %1) %2
-                             (unevaluated? %2) `(str ~%1 " " ~%2)
-                             :else (str %1 " " %2))
-                      attrs1 attrs2)]
-    (if id (assoc merged-attrs :id id) merged-attrs)))
-
-(defn normalize-element
-  "Ensure an element vector is of the form [tag-name attrs content]."
-  [[tag & content]]
-  (when (not (or (keyword? tag) (symbol? tag) (string? tag)))
-    (throw (js/Error. (str tag " is not a valid element name."))))
-  (let [[_ tag id class] (re-matches re-tag (name tag))
-        tag-attrs        (cond-> {}
-                           id (assoc :id id)
-                           class (assoc
-                                  :class
-                                  (if class
-                                    (str/replace ^String class "." " "))))
-        map-attrs        (first content)]
-    (if (map? map-attrs)
-      [tag (merge-attributes tag-attrs map-attrs) (next content)]
-      [tag tag-attrs content])))
+(def ^:dynamic *tmp-val* nil)
 
 (defn merge-shortcut-attributes [attrs1 attrs2]
   (let [attrs1-meta (meta attrs1)
         map-attrs (::map-attrs attrs1-meta)
         merged-attrs (merge-with
                       #(cond (nil? %1) %2
-                             (unevaluated? %2) `(str ~%1 " " ~%2)
+                             (util/unevaluated? %2) `(str ~%1 " " ~%2)
                              :else (str %1 " " %2))
                       map-attrs attrs2)]
     (with-meta merged-attrs (assoc attrs1-meta ::shortcut-attrs attrs2))))
@@ -56,7 +21,7 @@ an element name."
         shortcut-attrs (::shortcut-attrs attrs1-meta)
         merged-attrs (merge-with
                       #(cond (nil? %1) %2
-                             (unevaluated? %2) `(str ~%1 " " ~%2)
+                             (util/unevaluated? %2) `(str ~%1 " " ~%2)
                              :else (str %1 " " %2))
                       shortcut-attrs attrs2)
         merged-attrs (if id (assoc merged-attrs :id id) merged-attrs)]

@@ -1,13 +1,9 @@
 (ns ewen.inccup.incremental.compiler-macros
   (:require [ewen.inccup.incremental.emitter :as emitter]
+            [ewen.inccup.util :as util]
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]))
-
-(create-ns 'ewen.inccup.incremental.compiler)
-(alias 'comp 'ewen.inccup.incremental.compiler)
-(doseq [v ['unevaluated? 'normalize-element]]
-  (intern 'ewen.inccup.incremental.compiler v))
 
 (def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-static-counter* nil)
@@ -77,7 +73,8 @@
   "Returns an unevaluated form that will render the supplied map as HTML
   attributes."
   [attrs path]
-  (if (some comp/unevaluated? (mapcat identity attrs))
+  (if (some util/unevaluated?
+            (mapcat identity attrs))
     (compile-dynamic-expr attrs path)
     attrs))
 
@@ -85,12 +82,16 @@
   ([attrs attr-path]
    (maybe-attr-map attrs attr-path nil))
   ([attrs attr-path path]
-   {:pred [(not (some comp/unevaluated? (mapcat identity attrs)))]}
+   {:pred [(not (some util/unevaluated?
+                      (mapcat identity attrs)))]}
    (when attrs
      (let [[expr used-vars] (track-vars attrs)
-           attr-form `#(if (map? ~expr)
-                         (comp/merge-map-attributes % ~expr)
-                         (comp/merge-map-attributes % {}))
+           attr-form
+           `#(if (map? ~expr)
+               (ewen.inccup.incremental.compiler/merge-map-attributes
+                % ~expr)
+               (ewen.inccup.incremental.compiler/merge-map-attributes
+                % {}))
            form (when path `#(if (map? ~expr) nil ~expr))]
        (update-dynamic-forms attr-form attr-path used-vars)
        (when expr (update-dynamic-forms form path used-vars))
@@ -99,18 +100,24 @@
 (defn- literal?
   "True if x is a literal value that can be rendered as-is."
   [x]
-  (and (not (comp/unevaluated? x))
+  (and (not (util/unevaluated? x))
        (or (not (or (vector? x) (map? x)))
            (every? literal? x))))
 
 (defn dynamic-tag [tag tag-path attr-path]
   {:pred [(not (literal? tag))]}
   (let [[expr used-vars] (track-vars tag)
-        tag-form `#(let [[tag# ~'_ ~'_] (comp/normalize-element [~expr])]
-                     tag#)
-        attr-form `#(let [[~'_ tag-attrs# _]
-                          (comp/normalize-element [~expr])]
-                      (comp/merge-shortcut-attributes % tag-attrs#))]
+        tag-form
+        `#(let [[tag# ~'_ ~'_]
+                (util/normalize-element
+                 [~expr])]
+            tag#)
+        attr-form
+        `#(let [[~'_ tag-attrs# _]
+                (util/normalize-element
+                 [~expr])]
+            (ewen.inccup.incremental.compiler/merge-shortcut-attributes
+             % tag-attrs#))]
     (update-dynamic-forms tag-form tag-path used-vars)
     (update-dynamic-forms attr-form attr-path used-vars)
     nil))
@@ -164,7 +171,7 @@
   "True if we can infer that x is not a map."
   [x]
   (or (= (form-name x) "for")
-      (not (comp/unevaluated? x))
+      (not (util/unevaluated? x))
       (not-hint? x java.util.Map)))
 
 (defn with-dom-node [content]
@@ -196,7 +203,7 @@
 
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content] path]
-  (let [[tag attrs _] (comp/normalize-element [tag attrs])
+  (let [[tag attrs _] (util/normalize-element [tag attrs])
         compiled-attrs (compile-attr-map attrs (conj path 1))]
     (with-dom-node
       (into [tag compiled-attrs] (compile-seq content path 2)))))
@@ -208,10 +215,12 @@
 (defmethod compile-element ::literal-tag
   [[tag attrs & content :as element] path]
   (let [[tag tag-attrs [first-content & rest-content]]
-        (comp/normalize-element element)
+        (util/normalize-element element)
         tag-attrs (if (map? tag-attrs)
                     (vary-meta
-                     tag-attrs assoc ::comp/shortcut-attrs tag-attrs)
+                     tag-attrs assoc
+                     :ewen.inccup.incremental.compiler/shortcut-attrs
+                     tag-attrs)
                     tag-attrs)]
     (maybe-attr-map first-content (conj path 1) (conj path 2))
     (with-dom-node
@@ -331,7 +340,8 @@
 
 (defn var-deps->predicate [var-deps]
   (cond (nil? *params-changed-sym*) true
-        (empty? var-deps) `(not (comp/safe-aget ~*cache-sym* "params"))
+        (empty? var-deps) `(not (ewen.inccup.incremental.compiler/safe-aget
+                                 ~*cache-sym* "params"))
         :else (let [preds (doall
                            (map #(get *params-changed-sym* %) var-deps))]
                 (if (= 1 (count preds))
@@ -467,7 +477,7 @@
                   (into *update-paths* [update-path-sym `'~update-path]))
             (set! *skips* (into *skips* [skips-sym skips]))
             (set! *statics* (into *statics* [statics-sym static]))
-            `(comp/update-with-cache
+            `(ewen.inccup.incremental.compiler/update-with-cache
               '~statics-sym ~*cache-sym* ~static-counter
               '~update-path-sym '~skips-sym
               (cljs.core/array ~@preds-and-exprs))))))
@@ -489,6 +499,7 @@
                          tracked-vars))]
     (binding [*tracked-vars* tracked-vars
               *cache-sym* (gensym "cache")
+              *cache-static-counter* 0
               *params-changed-sym* (zipmap params (map gensym params))
               *update-paths* []
               *skips* []
@@ -498,21 +509,24 @@
         (if (nil? update-path)
           `[~update-fn-sym (fn [~*cache-sym* ~@params
                                 ~@(vals *params-changed-sym*)]
-                             (or (comp/safe-aget
-                                  ~*cache-sym* "prev-result")
-                                 ~static))]
+                             (or
+                              (ewen.inccup.incremental.compiler/safe-aget
+                               ~*cache-sym* "prev-result")
+                              ~static))]
           `[~@*update-paths* ~@*skips* ~@*statics*
             skips# ~skips
             update-path# '~update-path
-            ~update-fn-sym (fn [~*cache-sym* ~@params
-                                ~@(vals *params-changed-sym*)]
-                             (-> (comp/safe-aget
-                                  ~*cache-sym* "prev-result")
-                                 (or ~static)
-                                 (comp/assoc-in-tree
-                                  update-path# skips#
-                                  (cljs.core/array
-                                   ~@preds-and-exprs))))])))))
+            ~update-fn-sym
+            (fn [~*cache-sym* ~@params
+                 ~@(vals *params-changed-sym*)]
+              (->
+               (ewen.inccup.incremental.compiler/safe-aget
+                ~*cache-sym* "prev-result")
+               (or ~static)
+               (ewen.inccup.incremental.compiler/assoc-in-tree
+                update-path# skips#
+                (cljs.core/array
+                 ~@preds-and-exprs))))])))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
@@ -547,8 +561,8 @@
       (do
         (set! *cache-static-counter* (inc *cache-static-counter*))
         `(do
-           (set! comp/*implicit-param*
-                 (comp/get-static-cache
+           (set! ewen.inccup.incremental.compiler/*implicit-param*
+                 (ewen.inccup.incremental.compiler/get-static-cache
                   ~*cache-sym* ~(dec *cache-static-counter*)))
              ~(emitter/invoke-emit ast)))
       (emitter/invoke-emit ast))))
