@@ -1,8 +1,7 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [html defhtml]]
-            [ewen.inccup.incremental.compiler
-             :refer [*cache* init-cache clean-dynamic-array]]
+            [ewen.inccup.incremental.compiler :refer [*cache* init-cache]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]))
 
 (set-print-fn! #(.log js/console %))
@@ -48,33 +47,38 @@
         (is (not= res1 res3))
         (is (identical? res2 res3))
         (is (identical? (get-in res1 [4 1]) (get-in res2 [4 1])))
+        @cache-seq
         (is
          (=
           @cache-seq
-          '[{"sub-cache"
-             [{"dynamic-counter" 0
-               "dynamic-array"
-               [{"sub-cache" [] "prev-result" ["p" {} 1]}]}
-              {"dynamic-counter" 0
-               "dynamic-array"
-               [{"sub-cache" []
-                 "params" [2]
-                 "prev-result" ["p" {} 2]}]}]
-             "top-level" true
-             "params" [1 2]
-             "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}
-            {"sub-cache"
-             [{"dynamic-counter" 0
-               "dynamic-array"
-               [{"sub-cache" [] "prev-result" ["p" {} 3]}]}
-              {"dynamic-counter" 0
-               "dynamic-array"
-               [{"sub-cache" []
-                 "params" [4]
-                 "prev-result" ["p" {} 4]}]}]
-             "top-level" true
-             "params" [3 4]
-             "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]]}])))))
+          '[{"dynamic-counter" 1,
+             "dynamic-array"
+             [{"sub-cache"
+               [{"dynamic-counter" 1,
+                 "dynamic-array" [{"sub-cache" [],
+                                   "prev-result" ["p" {} 1]}]}
+                {"dynamic-counter" 1,
+                 "dynamic-array"
+                 [{"sub-cache" [],
+                   "params" [2],
+                   "prev-result" ["p" {} 2]}]}],
+               "params" [1 2],
+               "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}]}
+            {"dynamic-counter" 1,
+             "dynamic-array"
+             [{"sub-cache"
+               [{"dynamic-counter" 1,
+                 "dynamic-array"
+                 [{"sub-cache" [],
+                   "prev-result" ["p" {} 3],
+                   "params" nil}]}
+                {"dynamic-counter" 1,
+                 "dynamic-array"
+                 [{"sub-cache" [],
+                   "prev-result" ["p" {} 4],
+                   "params" [4]}]}],
+               "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]],
+               "params" [3 4]}]}])))))
 
   #_(testing "dynamic-cache"
       (binding [*cache* (init-cache)]
@@ -100,4 +104,11 @@
 
 (comment
   (run-tests 'ewen.inccup.incremental.core-test)
+  )
+
+(comment
+
+  (binding [*cache* (init-cache)]
+    (let [res1 (template3 [1])]
+      (prn *cache*)))
   )

@@ -5,6 +5,7 @@
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]))
 
+(def ^:dynamic *prev-cache-sym* nil)
 (def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-static-counter* nil)
 (def ^:dynamic *params-changed-sym* nil)
@@ -41,7 +42,8 @@
           ;; and thus, the wrapping let forms are not analyzed.
           env (reduce add-local-in-env
                       (or *env* (ana-api/empty-env))
-                      (into [*cache-sym*] (vals *params-changed-sym*)))
+                      (into [*cache-sym* *prev-cache-sym*]
+                            (vals *params-changed-sym*)))
           cljs-expanded (-> env (ana-api/analyze expr) emitter/emit*)
           used-vars (keep #(when (:is-used %) (:symbol %))
                           (vals *tracked-vars*))]
@@ -323,7 +325,7 @@
 (defn var-deps->predicate [var-deps]
   (cond (nil? *params-changed-sym*) true
         (empty? var-deps) `(not (ewen.inccup.incremental.compiler/safe-aget
-                                 ~*cache-sym* "params"))
+                                 ~*prev-cache-sym* "params"))
         :else (let [preds (doall
                            (map #(get *params-changed-sym* %) var-deps))]
                 (if (= 1 (count preds))
@@ -380,41 +382,6 @@
        (dynamic-forms->preds-and-exprs dyn-forms)]))
   )
 
-#_(defn dynamic-form->update-expr [{:keys [path var-deps form sub-forms]}]
-  {:pre [(or (and form (nil? sub-forms))
-             (and (nil? form) sub-forms))]}
-  (let [predicate (var-deps->predicate var-deps)]
-    (cond
-      (empty? path) ;; only dynamic
-      `(~(var-deps->predicate var-deps) (~form))
-      form
-      `(~(var-deps->predicate var-deps)
-        (update-in ~path ~form))
-      :else
-      `(~(var-deps->predicate var-deps)
-        (update-in ~path ~(dynamic-forms->update-expr sub-forms))))))
-
-#_(defn dynamic-forms->update-expr [dynamic-forms]
-  (if (empty? dynamic-forms) ;; only static
-    `identity
-    (let [update-exprs (mapcat dynamic-form->update-expr dynamic-forms)]
-      `(cond-> ~@update-exprs))))
-
-#_(comment
-  (binding [*params-changed-sym* {'x 'x123 'y 'y234 'z 'z456}]
-    (dynamic-forms->update-expr
-     '({:path [0 1] :var-deps #{x} :form (constantly x)}
-       {:path [2 0]
-        :var-deps #{x y z}
-        :sub-forms
-        ({:path [0] :var-deps #{x} :form (constantly x)}
-         {:path [1 0]
-          :var-deps #{x y z}
-          :sub-forms
-          ({:path [0] :var-deps #{x y} :form (constantly y)}
-           {:path [1] :var-deps #{z} :form (constantly z)})})})))
-  )
-
 (defn extract-params [params]
   (let [extracted (atom #{})]
     (postwalk (fn [x]
@@ -454,14 +421,17 @@
             skips-sym (gensym "skips")
             statics-sym (gensym "static")]
         (if (nil? update-path) ;; literal content
-          `(or (safe-aget ~*cache-sym* "prev-result") '~statics-sym)
+          `(or (safe-aget ~*prev-cache-sym* "prev-result") '~statics-sym)
           (do
             (set! *update-paths*
                   (into *update-paths* [update-path-sym `'~update-path]))
             (set! *skips* (into *skips* [skips-sym skips]))
             (set! *statics* (into *statics* [statics-sym static]))
             `(ewen.inccup.incremental.compiler/update-with-cache
-              '~statics-sym ~*cache-sym* ~static-counter
+              '~statics-sym
+              ~*prev-cache-sym*
+              ~*cache-sym*
+              ~static-counter
               '~update-path-sym '~skips-sym
               (cljs.core/array ~@preds-and-exprs))))))
     ;; The html macro is used outside a defhtml, there is no need for
@@ -481,6 +451,7 @@
                                     (rest params)))
                          tracked-vars))]
     (binding [*tracked-vars* tracked-vars
+              *prev-cache-sym* (gensym "prev-cache")
               *cache-sym* (gensym "cache")
               *params-changed-sym* (zipmap params (map gensym params))
               *update-paths* []
@@ -489,21 +460,21 @@
       (let [[static update-path skips preds-and-exprs]
             (compile-inc* content env)]
         (if (nil? update-path) ;; literal content
-          `[~update-fn-sym (fn [~*cache-sym* ~@params
+          `[~update-fn-sym (fn [~*prev-cache-sym* ~*cache-sym* ~@params
                                 ~@(vals *params-changed-sym*)]
                              (or
                               (ewen.inccup.incremental.compiler/safe-aget
-                               ~*cache-sym* "prev-result")
+                               ~*prev-cache-sym* "prev-result")
                               ~static))]
           `[~@*update-paths* ~@*skips* ~@*statics*
             skips# ~skips
             update-path# '~update-path
             ~update-fn-sym
-            (fn [~*cache-sym* ~@params
-                 ~@(vals *params-changed-sym*)]
+            (fn [~*prev-cache-sym* ~*cache-sym*
+                 ~@params ~@(vals *params-changed-sym*)]
               (->
                (ewen.inccup.incremental.compiler/safe-aget
-                ~*cache-sym* "prev-result")
+                ~*prev-cache-sym* "prev-result")
                (or ~static)
                (ewen.inccup.incremental.compiler/assoc-in-tree
                 update-path# skips#
@@ -543,7 +514,10 @@
       (do
         (set! *cache-static-counter* (inc *cache-static-counter*))
         `(do
-           (set! ewen.inccup.incremental.compiler/*implicit-param*
+           (set! ewen.inccup.incremental.compiler/*implicit-param1*
+                 (ewen.inccup.incremental.compiler/get-static-cache
+                  ~*prev-cache-sym* ~(dec *cache-static-counter*)))
+           (set! ewen.inccup.incremental.compiler/*implicit-param2*
                  (ewen.inccup.incremental.compiler/get-static-cache
                   ~*cache-sym* ~(dec *cache-static-counter*)))
              ~(emitter/invoke-emit ast)))

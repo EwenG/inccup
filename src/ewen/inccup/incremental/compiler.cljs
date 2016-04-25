@@ -3,7 +3,8 @@
             [ewen.inccup.util :as util]))
 
 (def ^:dynamic *cache* nil)
-(def ^:dynamic *implicit-param* nil)
+(def ^:dynamic *implicit-param1* nil)
+(def ^:dynamic *implicit-param2* nil)
 (def ^:dynamic *tmp-val* nil)
 
 (defn maybe-merge-attributes [tag-attrs expr]
@@ -20,69 +21,42 @@
  (when obj (aget obj k)))
 
 (defn init-cache []
- ;; The top-level field is used to clean the dynamic arrays
- ;; of the top level component when it terminates its execution. It is
- ;; useful because the dynamic arrays are cleaned by the previous
- ;; components, but the top-level component has no previous component
- (js-obj "sub-cache" (array) "top-level" true))
+  (js-obj "dynamic-counter" 0
+          "dynamic-array" (array)))
 
-(defn init-cache* []
- ;; The top-level field is used to clean the dynamic arrays
- ;; of the top level component when it terminates its execution. It is
- ;; useful because the dynamic arrays are cleaned by the previous
- ;; components, but the top-level component has no previous component
- (js-obj "dynamic-counter" 0
-         "dynamic-array" (array)))
+(defn inc-dynamic-cache [cache]
+  (when cache
+    (let [dynamic-counter (aget cache "dynamic-counter")]
+      (aset cache "dynamic-counter" (inc dynamic-counter))
+      dynamic-counter)))
 
-(defn new-dynamic-cache [cache]
- (when cache
-   (let [dynamic-counter (aget cache "dynamic-counter")
-         ;; The dynamic counter of the top level component will never
-         ;; be more than one. We don't increment it. It avoids the need
-         ;; to clean it. Cleaning it is tricky because the top-level
-         ;; component has no predecessor and dynamic array is cleaned
-         ;; by the parent component.
-         is-top-level? (aget cache "top-level")
-         current-cache (-> (aget cache "dynamic-array")
-                           (aget dynamic-counter))]
-     (when-not is-top-level?
-       (aset cache "dynamic-counter" (inc dynamic-counter)))
-     (or current-cache
-         (let [new-cache (js-obj "sub-cache" (array))]
-           (.push (aget cache "dynamic-array") new-cache)
-           new-cache)))))
+(defn new-dynamic-cache [cache counter]
+  (when cache
+    (let [dynamic-array (aget cache "dynamic-array")
+          cache-item (aget dynamic-array counter)]
+      (or cache-item
+          (aset dynamic-array counter
+                (js-obj "sub-cache" (array)))))))
 
-(defn clean-dynamic-array [c]
- (let [dyn-arr (aget c "dynamic-array")
-       dyn-counter (aget c "dynamic-counter")
-       cache-shrink-nb (- (count dyn-arr) dyn-counter)]
-   ;; dyn counter can be 0 either because the sub-component was not
-   ;; called because the var(s) it depends on did not change or because
-   ;; it is inside a loop that was executed on an empty collection.
-   ;; In the first case, we must not clean the dynamic array.
-   ;; The fact that we don't clean the array in the second case is an
-   ;; unfortunate side effect, but I can't see a simple way to avoid it.
-   (when (not= dyn-counter 0)
-     (dotimes [_ cache-shrink-nb]
-       (.pop dyn-arr))
-     (aset c "dynamic-counter" 0))))
-
-(defn clean-sub-cache [cache]
- (when cache
-   (doseq [c (aget cache "sub-cache")]
-     (clean-dynamic-array c))))
+(let [empty-obj (js-obj "sub-cache" (array))]
+  (defn get-dynamic-cache [cache counter]
+    (when cache
+      (let [current-cache (-> (aget cache "dynamic-array")
+                              (aget counter))]
+        (or current-cache empty-obj)))))
 
 (defn get-static-cache [cache static-counter]
- (when cache
-   (-> (aget cache "sub-cache")
-       (aget static-counter))))
+  (when cache
+    (-> (aget cache "sub-cache")
+        (aget static-counter))))
 
 (defn make-static-cache [cache static-counter]
- (when cache
-   (let [sub-cache (aget cache "sub-cache")]
-     (when (not= static-counter (count sub-cache))
-       (dotimes [_ static-counter]
-         (.push sub-cache (init-cache*)))))))
+  (when cache
+    (let [sub-cache (aget cache "sub-cache")]
+      (when (and (> static-counter 0)
+                 (nil? (aget sub-cache 0)))
+        (dotimes [_ static-counter]
+          (.push sub-cache (init-cache)))))))
 
 (defn assoc-in-tree*
   [tree [[index & r-index :as path] & paths]
@@ -141,18 +115,19 @@
   )
 
 (defn copy-cache [cache]
-  (let [dyn-array (aget cache "dynamic-array")
-        first-dynamic (aget dyn-array 0)]
-    #js {"dynamic-counter" 0
-         "dynamic-array"
-         (if first-dynamic
-           #js [(let [new-sub-cache #js []]
-                  (doseq [sub-cache (aget first-dynamic "sub-cache")]
-                    (.push new-sub-cache (copy-cache sub-cache)))
-                  #js {"sub-cache" new-sub-cache
-                       "prev-result" (aget first-dynamic "prev-result")
-                       "params" (aget first-dynamic "params")})]
-           #js [])}))
+  (when cache
+    (let [dyn-array (aget cache "dynamic-array")
+          first-dynamic (aget dyn-array 0)]
+      #js {"dynamic-counter" 0
+           "dynamic-array"
+           (if first-dynamic
+             #js [(let [new-sub-cache #js []]
+                    (doseq [sub-cache (aget first-dynamic "sub-cache")]
+                      (.push new-sub-cache (copy-cache sub-cache)))
+                    #js {"sub-cache" new-sub-cache
+                         "prev-result" (aget first-dynamic "prev-result")
+                         "params" (aget first-dynamic "params")})]
+             #js [])})))
 
 (comment
 
@@ -170,38 +145,51 @@
 
   )
 
-(defn compute-update-fn-params [cache params prev-params params-nb]
- (let [update-fn-params (array)]
-   (.push update-fn-params cache)
-   (dotimes [i params-nb]
-     (.push update-fn-params (aget params i)))
-   (if prev-params
-     (dotimes [i params-nb]
-       (.push update-fn-params
-              (not= (aget params i) (aget prev-params i))))
-     (dotimes [i params-nb]
-       (.push update-fn-params true)))
-   update-fn-params))
+(defn compute-update-fn-params
+  [prev-cache cache params prev-params params-nb]
+  (let [update-fn-params (array)]
+    (.push update-fn-params prev-cache)
+    (.push update-fn-params cache)
+    (dotimes [i params-nb]
+      (.push update-fn-params (aget params i)))
+    (if prev-params
+      (dotimes [i params-nb]
+        (.push update-fn-params
+               (not= (aget params i) (aget prev-params i))))
+      (dotimes [i params-nb]
+        (.push update-fn-params true)))
+    update-fn-params))
 
 (defn inccupdate
- [update-fn params params-nb cache-static-counter]
- (let [cache (or (new-dynamic-cache *implicit-param*) *cache*)
-       prev-params (safe-aget cache "params")
-       update-fn-params (compute-update-fn-params
-                         cache params prev-params params-nb)
-       _ (make-static-cache cache cache-static-counter)
-       result (apply update-fn update-fn-params)]
-   (safe-aset cache "params" params)
-   (safe-aset cache "prev-result" result)
-   (clean-sub-cache cache)
-   (set! *implicit-param* nil)
-   result))
+  [update-fn params params-nb cache-static-counter]
+  (let [prev-cache (or *implicit-param1* *cache*)
+        cache (or *implicit-param2*
+                  (->> (copy-cache prev-cache)
+                       (set! *cache*)))
+        _ (set! *implicit-param1* nil)
+        _ (set! *implicit-param2* nil)
+        dynamic-counter (inc-dynamic-cache cache)
+        prev-cache (get-dynamic-cache prev-cache dynamic-counter)
+        cache (new-dynamic-cache cache dynamic-counter)
+        _ (make-static-cache prev-cache cache-static-counter)
+        _ (make-static-cache cache cache-static-counter)
+        prev-params (safe-aget prev-cache "params")
+        update-fn-params (compute-update-fn-params
+                          prev-cache cache
+                          params prev-params params-nb)
+        result (apply update-fn update-fn-params)]
+    (safe-aset cache "params" params)
+    (safe-aset cache "prev-result" result)
+    result))
 
-(defn update-with-cache [static cache static-counter update-path
-                         skips preds-and-exprs]
-  (let [cache (get-static-cache cache static-counter)
-        cache (new-dynamic-cache cache)
-        result (-> (safe-aget cache "prev-result")
+(defn update-with-cache [static prev-cache cache static-counter
+                         update-path skips preds-and-exprs]
+  (let [prev-cache (get-static-cache prev-cache static-counter)
+        cache (get-static-cache cache static-counter)
+        dynamic-counter (inc-dynamic-cache cache)
+        prev-cache (get-dynamic-cache prev-cache dynamic-counter)
+        cache (new-dynamic-cache cache dynamic-counter)
+        result (-> (safe-aget prev-cache "prev-result")
                    (or static)
                    (assoc-in-tree update-path skips preds-and-exprs))]
     (safe-aset cache "prev-result" result)
