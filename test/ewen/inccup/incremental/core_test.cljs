@@ -1,7 +1,8 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [html defhtml]]
-            [ewen.inccup.incremental.compiler :refer [*cache* init-cache]]
+            [ewen.inccup.incremental.compiler :refer
+             [*cache* init-cache clean-cache]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]))
 
 (set-print-fn! #(.log js/console %))
@@ -31,84 +32,85 @@
              ["div" {:class "e"} [:p] "t"])))))
 
 (def cache-seq (atom []))
+
 (defhtml template1 [x] [:p {} x])
 (defhtml template2 [x y] [:p {} x (html [:p x]) (template1 y)])
 (defhtml template3 [x] [:p {} (count x) (for [y x] (template1 y))])
 
 (deftest test-cache
-  (testing "cache"
-    (binding [*cache* (init-cache)]
-      (reset! cache-seq [])
-      (let [res1 (template2 1 2)
-            _ (swap! cache-seq conj (js->clj *cache*))
-            res2 (template2 3 4)
-            _ (swap! cache-seq conj (js->clj *cache*))
-            res3 (template2 3 4)]
-        (is (not= res1 res3))
-        (is (identical? res2 res3))
-        (is (identical? (get-in res1 [4 1]) (get-in res2 [4 1])))
-        @cache-seq
-        (is
-         (=
+    (testing "cache"
+      (binding [*cache* (init-cache)]
+        (reset! cache-seq [])
+        (let [res1 (template2 1 2)
+              _ (swap! cache-seq conj (js->clj *cache*))
+              res2 (template2 3 4)
+              _ (swap! cache-seq conj (js->clj *cache*))
+              res3 (template2 3 4)]
+          (is (not= res1 res3))
+          (is (identical? res2 res3))
+          (is (identical? (get-in res1 [4 1]) (get-in res2 [4 1])))
           @cache-seq
-          '[{"dynamic-counter" 1,
-             "dynamic-array"
-             [{"sub-cache"
+          (is
+           (=
+            @cache-seq
+            '[{"sub-cache"
                [{"dynamic-counter" 1,
                  "dynamic-array" [{"sub-cache" [],
+                                   "version" 1,
                                    "prev-result" ["p" {} 1]}]}
                 {"dynamic-counter" 1,
                  "dynamic-array"
                  [{"sub-cache" [],
+                   "version" 1,
                    "params" [2],
                    "prev-result" ["p" {} 2]}]}],
+               "version" 1,
                "params" [1 2],
-               "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}]}
-            {"dynamic-counter" 1,
-             "dynamic-array"
-             [{"sub-cache"
+               "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}
+              {"sub-cache"
                [{"dynamic-counter" 1,
                  "dynamic-array"
                  [{"sub-cache" [],
-                   "prev-result" ["p" {} 3],
-                   "params" nil}]}
+                   "version" 2,
+                   "prev-result" ["p" {} 3]}]}
                 {"dynamic-counter" 1,
                  "dynamic-array"
                  [{"sub-cache" [],
+                   "version" 2,
                    "prev-result" ["p" {} 4],
                    "params" [4]}]}],
+               "version" 2,
                "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]],
-               "params" [3 4]}]}])))))
+               "params" [3 4]}])))))
 
   #_(testing "dynamic-cache"
-      (binding [*cache* (init-cache)]
-        (reset! cache-seq [])
-        (let [res1 (template3 [1 2])
-              _ (prn res1)
-              _ (swap! cache-seq conj (js->clj *cache*))
-              res2 (template3 [1 2])
-              _ (prn res2)
-              res3 (template3 [1 2 3])
-              _ (prn res3)
-              _ (swap! cache-seq conj (js->clj *cache*))
-              res4 (template3 [6])
-              _ (prn res4)
-              _ (swap! cache-seq conj (js->clj *cache*))]
-          (identical? res1 res2)
-          (is (not= res1 res3 res4))
-          (prn @cache-seq)))))
-
-
+        (binding [*cache* (init-cache)]
+          (reset! cache-seq [])
+          (let [res1 (template3 [1 2])
+                _ (prn res1)
+                _ (swap! cache-seq conj (js->clj *cache*))
+                res2 (template3 [1 2])
+                _ (prn res2)
+                res3 (template3 [1 2 3])
+                _ (prn res3)
+                _ (swap! cache-seq conj (js->clj *cache*))
+                res4 (template3 [6])
+                _ (prn res4)
+                _ (swap! cache-seq conj (js->clj *cache*))]
+            (identical? res1 res2)
+            (is (not= res1 res3 res4))
+            (prn @cache-seq)))))
 
 
 
 (comment
   (run-tests 'ewen.inccup.incremental.core-test)
+
+  (defhtml template2 [x y] [:p {} ^{:ewen.inccup.core/id 1} (template1 y)])
   )
 
 (comment
 
-  (binding [*cache* (init-cache)]
-    (let [res1 (template3 [1])]
-      (prn *cache*)))
+
+
   )

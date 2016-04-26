@@ -5,7 +5,6 @@
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]))
 
-(def ^:dynamic *prev-cache-sym* nil)
 (def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-static-counter* nil)
 (def ^:dynamic *params-changed-sym* nil)
@@ -42,7 +41,7 @@
           ;; and thus, the wrapping let forms are not analyzed.
           env (reduce add-local-in-env
                       (or *env* (ana-api/empty-env))
-                      (into [*cache-sym* *prev-cache-sym*]
+                      (into [*cache-sym*]
                             (vals *params-changed-sym*)))
           cljs-expanded (-> env (ana-api/analyze expr) emitter/emit*)
           used-vars (keep #(when (:is-used %) (:symbol %))
@@ -325,7 +324,7 @@
 (defn var-deps->predicate [var-deps]
   (cond (nil? *params-changed-sym*) true
         (empty? var-deps) `(not (ewen.inccup.incremental.compiler/safe-aget
-                                 ~*prev-cache-sym* "params"))
+                                 ~*cache-sym* "params"))
         :else (let [preds (doall
                            (map #(get *params-changed-sym* %) var-deps))]
                 (if (= 1 (count preds))
@@ -350,7 +349,7 @@
 (defn dynamic-forms->preds-and-exprs
   [{:keys [path var-deps sub-forms form]}]
   (if (empty? sub-forms)
-    [(var-deps->predicate var-deps) form]
+    [(var-deps->predicate var-deps) `(fn [] ~form)]
     (into [(var-deps->predicate var-deps)]
           (mapcat dynamic-forms->preds-and-exprs sub-forms))))
 
@@ -421,17 +420,14 @@
             skips-sym (gensym "skips")
             statics-sym (gensym "static")]
         (if (nil? update-path) ;; literal content
-          `(or (safe-aget ~*prev-cache-sym* "prev-result") '~statics-sym)
+          `(or (safe-aget ~*cache-sym* "prev-result") '~statics-sym)
           (do
             (set! *update-paths*
                   (into *update-paths* [update-path-sym `'~update-path]))
             (set! *skips* (into *skips* [skips-sym skips]))
             (set! *statics* (into *statics* [statics-sym static]))
             `(ewen.inccup.incremental.compiler/update-with-cache
-              '~statics-sym
-              ~*prev-cache-sym*
-              ~*cache-sym*
-              ~static-counter
+              '~statics-sym ~*cache-sym* ~static-counter
               '~update-path-sym '~skips-sym
               (cljs.core/array ~@preds-and-exprs))))))
     ;; The html macro is used outside a defhtml, there is no need for
@@ -451,7 +447,6 @@
                                     (rest params)))
                          tracked-vars))]
     (binding [*tracked-vars* tracked-vars
-              *prev-cache-sym* (gensym "prev-cache")
               *cache-sym* (gensym "cache")
               *params-changed-sym* (zipmap params (map gensym params))
               *update-paths* []
@@ -460,26 +455,22 @@
       (let [[static update-path skips preds-and-exprs]
             (compile-inc* content env)]
         (if (nil? update-path) ;; literal content
-          `[~update-fn-sym (fn [~*prev-cache-sym* ~*cache-sym* ~@params
+          `[~update-fn-sym (fn [~*cache-sym* ~@params
                                 ~@(vals *params-changed-sym*)]
                              (or
                               (ewen.inccup.incremental.compiler/safe-aget
-                               ~*prev-cache-sym* "prev-result")
+                               ~*cache-sym* "prev-result")
                               ~static))]
-          `[~@*update-paths* ~@*skips* ~@*statics*
-            skips# ~skips
-            update-path# '~update-path
-            ~update-fn-sym
-            (fn [~*prev-cache-sym* ~*cache-sym*
-                 ~@params ~@(vals *params-changed-sym*)]
+          `[~@*update-paths* ~@*skips* ~@*statics* skips# ~skips
+            update-path# '~update-path ~update-fn-sym
+            (fn [~*cache-sym* ~@params ~@(vals *params-changed-sym*)]
               (->
                (ewen.inccup.incremental.compiler/safe-aget
-                ~*prev-cache-sym* "prev-result")
+                ~*cache-sym* "prev-result")
                (or ~static)
                (ewen.inccup.incremental.compiler/assoc-in-tree
                 update-path# skips#
-                (cljs.core/array
-                 ~@preds-and-exprs))))])))))
+                (cljs.core/array ~@preds-and-exprs))))])))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
@@ -512,15 +503,15 @@
   (let [is-defhtml? (-> (:info f) :meta :ewen.inccup.core/defhtml)]
     (if is-defhtml?
       (do
+        #_(prn (meta (:form ast)))
         (set! *cache-static-counter* (inc *cache-static-counter*))
         `(do
-           (set! ewen.inccup.incremental.compiler/*implicit-param1*
-                 (ewen.inccup.incremental.compiler/get-static-cache
-                  ~*prev-cache-sym* ~(dec *cache-static-counter*)))
-           (set! ewen.inccup.incremental.compiler/*implicit-param2*
+           (set! ewen.inccup.incremental.compiler/*implicit-param*
                  (ewen.inccup.incremental.compiler/get-static-cache
                   ~*cache-sym* ~(dec *cache-static-counter*)))
-             ~(emitter/invoke-emit ast)))
+           (set! ewen.inccup.incremental.compiler/*version*
+                 (aget ~*cache-sym* "version"))
+           ~(emitter/invoke-emit ast)))
       (emitter/invoke-emit ast))))
 
 (comment
