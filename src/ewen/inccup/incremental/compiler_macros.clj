@@ -434,7 +434,7 @@
     ;; caching
     content))
 
-(defn compile-inc-with-params [env content params update-fn-sym]
+#_(defn compile-inc-with-params [env content params update-fn-sym]
   (let [env (reduce add-local-in-env env params)
         tracked-vars (loop [tracked-vars {}
                             params params]
@@ -471,6 +471,47 @@
                (ewen.inccup.incremental.compiler/assoc-in-tree
                 update-path# skips#
                 (cljs.core/array ~@preds-and-exprs))))])))))
+
+(defn compile-inc-with-params [env content params update-fn-sym]
+  (let [env (reduce add-local-in-env env params)
+        tracked-vars (loop [tracked-vars {}
+                            params params]
+                       (if-let [param (first params)]
+                         (do (assert (contains? (:locals env) param))
+                             (recur (assoc tracked-vars param
+                                           {:env (get (:locals env) param)
+                                            :is-used false
+                                            :symbol param})
+                                    (rest params)))
+                         tracked-vars))]
+    (binding [*tracked-vars* tracked-vars
+              *params-changed-sym* (zipmap params (map gensym params))
+              *first-render-sym* (gensym "first-render")
+              *update-paths* []
+              *skips* []
+              *statics* []]
+      (let [[static update-path skips preds-and-exprs]
+            (compile-inc* content env)]
+        (if (nil? update-path) ;; literal content
+          `[static# ~static
+            ~update-fn-sym (with-meta
+                             (fn [prev-result# ~*first-render-sym*
+                                  ~@(vals *params-changed-sym*)]
+                               static#)
+                             {"inccup/defhtml" true
+                              "inccup/static" static#})]
+          `[~@*update-paths* ~@*skips* ~@*statics*
+            skips# ~skips
+            update-path# '~update-path
+            static# ~static
+            ~update-fn-sym
+            (with-meta
+              (fn [prev-result# ~*first-render-sym*
+                   ~@(vals *params-changed-sym*)]
+                (ewen.inccup.incremental.compiler/inccupdate
+                 prev-result# update-path# skips#))
+              (js-obj "inccup/defhtml" true
+                      "inccup/static" static#))])))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars

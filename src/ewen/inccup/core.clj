@@ -42,13 +42,20 @@
   [name & meta-body]
   (let [[name [args & options-content]] (name-with-attributes
                                          name meta-body)
-        ;; TODO emits a warning if this is a redefinition of a var which
-        ;; does not have the ::defhtml meta set
         name (vary-meta name assoc ::defhtml true)
         [{:keys [mode output-format]} content] (options-with-content
                                                 options-content &env)]
     (cond (= :inccup output-format)
           (let [params (extract-params args)
+                update-fn-sym (gensym "update-fn")]
+            `(let ~(compile-inc-with-params
+                    &env content params update-fn-sym)
+               (defn ~name ~args
+                 (fn [prev-result#]
+                   (ewen.inccup.incremental.compiler/apply-update-fn
+                     ~update-fn-sym prev-result#
+                     (cljs.core/array ~@params) ~(count params))))))
+          #_(let [params (extract-params args)
                 update-fn-sym (gensym "update-fn")]
             (binding [*cache-static-counter* 0]
               `(let ~(compile-inc-with-params

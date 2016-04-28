@@ -140,21 +140,23 @@
 
   )
 
-(defn compute-update-fn-params
-  [cache params prev-params params-nb]
-  (let [update-fn-params (array)]
-    (.push update-fn-params cache)
-    (dotimes [i params-nb]
-      (.push update-fn-params (aget params i)))
+(defn apply-update-fn [update-fn prev-result params params-nb]
+  (let [first-render? (-> (meta update-fn)
+                          (aget "inccup/static")
+                          (identical? prev-result))
+        prev-params (aget (meta prev-result) "inccup/prev-params")
+        update-fn-params (array)]
+    (.push update-fn-params prev-result)
+    (.push update-fn-params first-render?)
     (if prev-params
       (dotimes [i params-nb]
         (.push update-fn-params
                (not= (aget params i) (aget prev-params i))))
       (dotimes [i params-nb]
         (.push update-fn-params true)))
-    update-fn-params))
+    (apply update-fn update-fn-params)))
 
-(defn inccupdate
+#_(defn inccupdate
   [update-fn params params-nb cache-static-counter]
   (let [version (or *version* (inc (aget *cache* "version")))
         cache (-> (new-dynamic-cache *implicit-param*)
