@@ -181,3 +181,10 @@
       (js->clj *cache*)))
 
   )
+
+
+(comment
+  (let [f (def1 "e")
+        static (aget (meta f) "inccup/static")]
+    (f static))
+        )

@@ -8,6 +8,7 @@
 (def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-static-counter* nil)
 (def ^:dynamic *params-changed-sym* nil)
+(def ^:dynamic *first-render-sym* nil)
 (def ^:dynamic *dynamic-forms* nil)
 (def ^:dynamic *tracked-vars* #{})
 (def ^:dynamic *env* nil)
@@ -163,9 +164,6 @@
       (not (util/unevaluated? x))
       (not-hint? x java.util.Map)))
 
-(defn with-dom-node [content]
-  `(with-meta ~content (cljs.core/js-obj "dom-node" nil)))
-
 (defn- element-compile-strategy
   "Returns the compilation strategy to use for a given element."
   [[tag attrs & content :as element] path]
@@ -188,14 +186,13 @@
   element-compile-strategy)
 
 (defmethod compile-element ::all-literal
-  [element path] (with-dom-node element))
+  [element path] element)
 
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content] path]
   (let [[tag attrs _] (util/normalize-element [tag attrs])
         compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (with-dom-node
-      (into [tag compiled-attrs] (compile-seq content path 2)))))
+    (into [tag compiled-attrs] (compile-seq content path 2))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content] path]
@@ -206,8 +203,7 @@
   (let [[tag tag-attrs [first-content & rest-content]]
         (util/normalize-element element)]
     (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
-    (with-dom-node
-      (into [tag tag-attrs nil] (compile-seq rest-content path 3)))))
+    (into [tag tag-attrs nil] (compile-seq rest-content path 3))))
 
 (defmethod compile-element ::default
   [[tag attrs & rest-content] path]
@@ -215,8 +211,7 @@
   (maybe-attr-map attrs (conj path 1) (conj path 2) nil)
   (if (nil? attrs)
     [nil {}]
-    (with-dom-node
-      (into [nil {} nil] (compile-seq rest-content path 3)))))
+    (into [nil {} nil] (compile-seq rest-content path 3))))
 
 (declare compile-dispatch)
 
@@ -472,7 +467,7 @@
                 update-path# skips#
                 (cljs.core/array ~@preds-and-exprs))))])))))
 
-(defn compile-inc-with-params [env content params update-fn-sym]
+(defn compile-inc-with-params [env content params update-fn-sym static-sym]
   (let [env (reduce add-local-in-env env params)
         tracked-vars (loop [tracked-vars {}
                             params params]
@@ -493,25 +488,21 @@
       (let [[static update-path skips preds-and-exprs]
             (compile-inc* content env)]
         (if (nil? update-path) ;; literal content
-          `[static# ~static
-            ~update-fn-sym (with-meta
-                             (fn [prev-result# ~*first-render-sym*
-                                  ~@(vals *params-changed-sym*)]
-                               static#)
-                             {"inccup/defhtml" true
-                              "inccup/static" static#})]
+          `[~static-sym (with-meta ~static (cljs.core/js-obj))
+            ~update-fn-sym (fn [prev-result# ~*first-render-sym*
+                                ~@(vals *params-changed-sym*)]
+                             ~static-sym)]
           `[~@*update-paths* ~@*skips* ~@*statics*
             skips# ~skips
             update-path# '~update-path
-            static# ~static
+            ~static-sym (with-meta ~static (cljs.core/js-obj))
             ~update-fn-sym
-            (with-meta
-              (fn [prev-result# ~*first-render-sym*
-                   ~@(vals *params-changed-sym*)]
-                (ewen.inccup.incremental.compiler/inccupdate
-                 prev-result# update-path# skips#))
-              (js-obj "inccup/defhtml" true
-                      "inccup/static" static#))])))))
+            (fn [prev-result# ~*first-render-sym*
+                 ~@(vals *params-changed-sym*)]
+              [prev-result# ~*first-render-sym*
+               ~@(vals *params-changed-sym*)]
+              #_(ewen.inccup.incremental.compiler/inccupdate
+                 prev-result# update-path# skips#))])))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars

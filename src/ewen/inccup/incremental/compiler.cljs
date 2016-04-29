@@ -140,10 +140,8 @@
 
   )
 
-(defn apply-update-fn [update-fn prev-result params params-nb]
-  (let [first-render? (-> (meta update-fn)
-                          (aget "inccup/static")
-                          (identical? prev-result))
+(defn apply-update-fn [update-fn prev-result params params-nb static]
+  (let [first-render? (identical? static prev-result)
         prev-params (aget (meta prev-result) "inccup/prev-params")
         update-fn-params (array)]
     (.push update-fn-params prev-result)
