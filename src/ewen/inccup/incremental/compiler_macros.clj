@@ -173,7 +173,8 @@
     (symbol? x) (str x)
     (vector? x) `(cljs.core/array ~@(map literal->cljs x))
     (map? x) `(cljs.core/js-obj
-               ~@(interleave (keys x) (map literal->cljs (vals x))))
+               ~@(interleave (map name (keys x))
+                             (map literal->cljs (vals x))))
     (coll? x) `(let [coll# (cljs.core/array ~@(map literal->cljs x))]
                  (cljs.core/aset coll# "inccup/coll" true)
                  coll#)
@@ -420,7 +421,7 @@
             update-path (dynamic-forms->update-path dyn-forms)
             skips (dynamic-forms->skips dyn-forms)
             preds-and-exprs (dynamic-forms->preds-and-exprs dyn-forms)]
-        [static update-path skips preds-and-exprs]))))
+        [(literal->cljs static) update-path skips preds-and-exprs]))))
 
 ;; compile-inc being a macro let us read the cljs analyzer env during macro
 ;; expansion when compile-inc is used inside a defhtml body
@@ -501,26 +502,29 @@
                          tracked-vars))]
     (binding [*tracked-vars* tracked-vars
               *params-changed-sym* (zipmap params (map gensym params))
-              *first-render-sym* (gensym "first-render")
               *update-paths* []
               *skips* []
               *statics* []]
       (let [[static update-path skips preds-and-exprs]
             (compile-inc* content env)]
         (if (nil? update-path) ;; literal content
-          `[~static-sym (with-meta ~static (cljs.core/js-obj))
-            ~update-fn-sym (fn [prev-result# ~*first-render-sym*
-                                ~@(vals *params-changed-sym*)]
+          `[~static-sym  ~static
+            ~'_ (cljs.core/aset ~static-sym "inccup/prev-params" nil)
+            ~update-fn-sym (fn [prev-result# ~@(vals *params-changed-sym*)]
                              ~static-sym)]
           `[~@*update-paths* ~@*skips* ~@*statics*
             skips# ~skips
             update-path# '~update-path
-            ~static-sym (with-meta ~static (cljs.core/js-obj))
+            ~static-sym ~static
+            ~'_ (cljs.core/aset ~static-sym "inccup/prev-params" nil)
             ~update-fn-sym
-            (fn [prev-result# ~*first-render-sym*
-                 ~@(vals *params-changed-sym*)]
-              [prev-result# ~*first-render-sym*
-               ~@(vals *params-changed-sym*)]
+            (fn [prev-result# ~@(vals *params-changed-sym*)]
+              (let [prev-resut#
+                    (if (= ewen.inccup.incremental.compiler/first-render
+                           prev-result#)
+                      ~static-sym
+                      prev-result#)]
+                [~static-sym ~@(vals *params-changed-sym*)])
               #_(ewen.inccup.incremental.compiler/inccupdate
                  prev-result# update-path# skips#))])))))
 

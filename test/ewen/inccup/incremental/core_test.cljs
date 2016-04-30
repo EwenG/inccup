@@ -2,7 +2,7 @@
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [html defhtml]]
             [ewen.inccup.incremental.compiler :refer
-             [*cache* init-cache clean-cache]]
+             [first-render]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]))
 
 (set-print-fn! #(.log js/console %))
@@ -184,7 +184,7 @@
 
 
 (comment
-  (let [f (def1 "e")
-        static (aget (meta f) "inccup/static")]
-    (f static))
+  (defhtml def1 [x] [:div#ii.cc {} x])
+  ((def1 "e") first-render)
+
         )

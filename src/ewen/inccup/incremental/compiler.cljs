@@ -160,12 +160,13 @@
 
   )
 
+(def first-render (js-obj))
+
 (defn apply-update-fn [update-fn prev-result params params-nb static]
-  (let [first-render? (identical? static prev-result)
-        prev-params (aget (meta prev-result) "inccup/prev-params")
+  (let [prev-params (aget prev-result "inccup/prev-params")
         update-fn-params (array)]
     (.push update-fn-params prev-result)
-    (.push update-fn-params first-render?)
+    (.push update-fn-params)
     (if prev-params
       (dotimes [i params-nb]
         (.push update-fn-params
@@ -202,13 +203,3 @@
                    (assoc-in-tree update-path skips preds-and-exprs))]
     (safe-aset cache "prev-result" result)
     result))
-
-(comment
-  (merge-shortcut-attributes (with-meta {:f "e"}
-                               {::map-attrs {:g "g"}})
-                             {:e "e"})
-
-  (meta (merge-map-attributes (with-meta {:f "e"}
-                                {::shortcut-attrs {:g "g"}})
-                              {:e "e"}))
-  )
