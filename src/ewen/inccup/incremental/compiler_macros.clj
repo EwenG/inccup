@@ -164,6 +164,26 @@
       (not (util/unevaluated? x))
       (not-hint? x java.util.Map)))
 
+(defn literal->cljs [x]
+  (cond
+    (nil? x) nil
+    (string? x) x
+    (number? x) x
+    (keyword? x) (name x)
+    (symbol? x) (str x)
+    (vector? x) `(cljs.core/array ~@(map literal->cljs x))
+    (map? x) `(cljs.core/js-obj
+               ~@(interleave (keys x) (map literal->cljs (vals x))))
+    (coll? x) `(let [coll# (cljs.core/array ~@(map literal->cljs x))]
+                 (cljs.core/aset coll# "inccup/coll" true)
+                 coll#)
+    :else (throw (IllegalArgumentException.
+                  (str "Not a literal element: " x)))))
+
+(comment
+  (literal->cljs [:e {} "e"])
+  )
+
 (defn- element-compile-strategy
   "Returns the compilation strategy to use for a given element."
   [[tag attrs & content :as element] path]

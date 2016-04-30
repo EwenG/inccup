@@ -7,6 +7,26 @@
 (def ^:dynamic *version* nil)
 (def ^:dynamic *tmp-val* nil)
 
+;; Pretty printing purpose only
+(defn inccup->cljs [x]
+  (cond
+    (and x (aget x "inccup/coll"))
+    (doall (map inccup->cljs x))
+
+    (seq? x)
+    (doall (map inccup->cljs x))
+
+    (coll? x)
+    (into (empty x) (map inccup->cljs x))
+
+    (array? x)
+    (vec (map inccup->cljs x))
+
+    (identical? (type x) js/Object)
+    (into {} (for [k (js-keys x)]
+               [(keyword k) (inccup->cljs (aget x k))]))
+    :else x))
+
 (defn maybe-merge-attributes [tag-attrs expr]
   (let [tag-attrs (or tag-attrs *tmp-val*)]
     (set! *tmp-val* expr)
