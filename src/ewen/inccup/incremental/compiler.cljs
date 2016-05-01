@@ -85,6 +85,31 @@
 (defn assoc-in-tree [tree paths skips preds-and-forms]
   (assoc-in-tree* tree paths skips preds-and-forms (volatile! 0) assoc))
 
+(comment
+
+  (assoc-in-tree
+   '["p" {} nil]
+   '([] ([1]) ([2]))
+   '[5 2 0 2 0]
+   #js [true true 'x true 'y])
+
+  (let [ee '[:div {} [[nil [[nil 6]]]]]]
+    (identical?
+     (get-in ee [2 0 1])
+     (get-in (assoc-in-tree
+              ee
+              '([2 0] ([0]) ([1 0] ([0]) ([1])) ([2] ([0]) ([1])))
+              '[8 2 0 5 2 0 2 0]
+              #js [true true 'x false true 'y true 'z]) [2 0 1])))
+
+  (assoc-in-tree
+   '["p" {} nil]
+   '([] ([1]) ([2]))
+   '[5 2 0 2 0]
+   #js ['x123 'x 'y123 'y])
+
+  )
+
 (defn inccup-assoc-in [tree paths skips preds-and-forms]
   )
 
@@ -111,35 +136,95 @@
   (or (string? e) (keyword? e)
       (symbol? e) (number? e)))
 
+(comment
+  (delete-element component parent prev index element)
+  (create-element component parent prev index element)
+  (update-element component parent prev index old new)
+  (attr-update component parent prev index element key value new-value)
+
+  )
+
+(defn remove-elements-from-to [parent prev from to]
+  (prn from " " to)
+  (loop [index from
+         prev prev]
+    (when (< index to)
+      #_(delete-element component parent prev index (aget parent index))
+      (recur (inc index) nil)))
+  (loop [index from]
+    (when (< index to)
+      (.pop parent)
+      (recur (inc index)))))
+
 (defn diff-element [parent prev index new-e]
-  (let [[tag attrs :as e] (aget parent index)
-        [new-tag new-attrs] new-e
-        patch (cond
-                (and (nil? e) (vector? new-e))
-                (do "create-element"
-                    (aset parent index (normalize-element new-e)))
-                (and (nil? e) (text-element? new-e))
-                (do "create-element"
-                    (aset parent index (str new-e)))
-                (and (array? e) (vector? new-e))
-                (cond
-                  (and (not= tag new-tag) (not= attrs new-attrs))
-                  "replace-element"
-                  (not= tag new-tag)
-                  "patch-tag"
-                  (not= attrs new-attrs)
-                  "patch-attrs"
-                  :else nil)
-                (and (text-element? e) (text-element? new-e))
-                (if (= e new-e)
-                  e
-                  (do "patch-text-element" new-e))
-                :else (do "replace-element" new-e))]))
+  (let [[tag attrs :as e] (aget parent index)]
+    (cond
+      ;; e can only be nil when the parent element has new children
+      (and (nil? e) (vector? new-e))
+      (let [new-e (normalize-element new-e)]
+        (aset parent index new-e)
+        #_(create-element component parent prev index new-e)
+        new-e)
+      (and (nil? e) (text-element? new-e))
+      (let [new-e (str new-e)]
+        (aset parent index new-e)
+        #_(create-element component parent prev index new-e)
+        new-e)
+      (and (array? e) (vector? new-e))
+      (let [[new-tag new-attrs :as new-e]
+            (normalize-element new-e)]
+        (if (and (not= tag new-tag))
+          (do
+            #_(delete-element component parent prev index e)
+            (aset parent index new-e)
+            #_(create-element component parent prev index new-e)
+            new-e)
+          (do
+            (goog.object/forEach
+             new-attrs (fn [new-v new-k new-o]
+                         (let [v (aget attrs new-k)]
+                           (when (not= v new-v)
+                             (aset attrs new-k new-v)
+                             #_(attr-update component parent prev index e
+                                            new-k v new-v)))))
+            (goog.object/forEach
+             attrs (fn [v k o]
+                     (when-not (aget new-attrs k)
+                       (goog.object/remove attrs k)
+                       #_(attr-update component parent prev index
+                                      e k v nil))))
+            e)))
+      (and (text-element? e) (text-element? new-e))
+      (let [new-e (str new-e)]
+        (if (= e new-e)
+          e
+          (do
+            (aset parent index new-e)
+            #_(update-element component parent prev index e new-e)
+            new-e)))
+      (vector? new-e) ;;text-element <--> vector
+      (let [new-e (normalize-element new-e)]
+        #_(delete-element component parent prev index e)
+        (aset parent index new-e)
+        #_(create-element component parent prev index new-e)
+        new-e)
+      (text-element? new-e) ;;array <--> text-element
+      (let [new-e (str new-e)]
+        #_(delete-element component parent prev index e)
+        (aset parent index new-e))
+      :else (throw
+             (js/Error.
+              (str "Invalid elements: " e " " new-e))))))
 
 (defn inccup-diff [parent prev index new-form]
   (if (or (nil? new-form)
           (and (seq? new-form) (empty? new-form)))
-    nil
+    (let [l (count parent)]
+      (if (>= index l)
+        prev
+        (do
+          (remove-elements-from-to parent prev index l)
+          prev)))
     (cond
       (seq? new-form)
       (let [[f & rest] new-form
@@ -148,35 +233,43 @@
       (vector? new-form)
       (let [updated (diff-element parent prev index new-form)
             maybe-attrs (second new-form)]
-        (if (or (nil? maybe-attrs) (map? maybe-attrs))
-          (recur updated nil 2 (subvec new-form 2))
-          (recur updated nil 2 (subvec new-form 1))))
+        (let [index (if (or (nil? maybe-attrs) (map? maybe-attrs))
+                      2 1)]
+          (loop [[new-form & next-forms] (drop index new-form)
+                 prev nil
+                 index index]
+            (if new-form
+              (recur next-forms
+                     (inccup-diff updated prev index new-form)
+                     (inc index))
+              (inccup-diff updated prev index nil))))
+        (recur parent updated (inc index) nil))
       :else
-      (diff-element parent prev index new-form))))
+      (let [updated (diff-element parent prev index new-form)]
+          (recur parent updated (inc index) nil)))))
 
 (comment
 
-  (assoc-in-tree
-   '["p" {} nil]
-   '([] ([1]) ([2]))
-   '[5 2 0 2 0]
-   #js [true true 'x true 'y])
+  (let [tree '#js ["div"]]
+    (inccup-diff
+     tree nil 1 '[:p {} ([:div.cc] "e")])
+    tree)
 
-  (let [ee '[:div {} [[nil [[nil 6]]]]]]
-    (identical?
-     (get-in ee [2 0 1])
-     (get-in (assoc-in-tree
-              ee
-              '([2 0] ([0]) ([1 0] ([0]) ([1])) ([2] ([0]) ([1])))
-              '[8 2 0 5 2 0 2 0]
-              #js [true true 'x false true 'y true 'z]) [2 0 1])))
+  (let [tree '#js ["div"]]
+    (inccup-diff
+     tree nil 1 "e")
+    tree)
 
-  (assoc-in-tree
-   '["p" {} nil]
-   '([] ([1]) ([2]))
-   '[5 2 0 2 0]
-   #js ['x123 'x 'y123 'y])
+  (let [tree '#js ["div" [:p] [:div]]]
+    (inccup-diff
+     tree nil 1 "e")
+    tree)
 
+  (let [tree '#js ["div" #js ["p" #js {:a "a" :b "b"} "r" [:div#r "p"]]
+                   "r"]]
+    (inccup-diff
+     tree nil 1 [:p {:a "a2" :c "c2"}])
+    tree)
   )
 
 (defn clean-cache [cache]
