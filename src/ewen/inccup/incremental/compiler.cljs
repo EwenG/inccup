@@ -7,26 +7,6 @@
 (def ^:dynamic *version* nil)
 (def ^:dynamic *tmp-val* nil)
 
-;; Pretty printing purpose only
-(defn inccup->cljs [x]
-  (cond
-    (and x (aget x "inccup/coll"))
-    (doall (map inccup->cljs x))
-
-    (seq? x)
-    (doall (map inccup->cljs x))
-
-    (coll? x)
-    (into (empty x) (map inccup->cljs x))
-
-    (array? x)
-    (vec (map inccup->cljs x))
-
-    (identical? (type x) js/Object)
-    (into {} (for [k (js-keys x)]
-               [(keyword k) (inccup->cljs (aget x k))]))
-    :else x))
-
 (defn maybe-merge-attributes [tag-attrs expr]
   (let [tag-attrs (or tag-attrs *tmp-val*)]
     (set! *tmp-val* expr)
@@ -104,6 +84,75 @@
 
 (defn assoc-in-tree [tree paths skips preds-and-forms]
   (assoc-in-tree* tree paths skips preds-and-forms (volatile! 0) assoc))
+
+(defn inccup-assoc-in [tree paths skips preds-and-forms]
+  )
+
+(defn merge-attrs [o m]
+  (doseq [[k v] m]
+    (let [k (name k)]
+      (if (= "class" k)
+        (aset o "class" (str (aget o "class") " " v))
+        (aset o (name k) v))))
+  o)
+
+(defn normalize-element [[tag attrs]]
+  (let [[_ tag id class] (re-matches util/re-tag (name tag))
+        tag-attrs        (cond-> (js-obj)
+                           id (doto (aset "id" id))
+                           class (doto (aset
+                                        "class"
+                                        (if class
+                                          (str/replace class "." " ")))))
+        attrs (if (map? attrs) (merge-attrs tag-attrs attrs) tag-attrs)]
+    #js [tag attrs]))
+
+(defn text-element? [e]
+  (or (string? e) (keyword? e)
+      (symbol? e) (number? e)))
+
+(defn diff-element [parent prev index new-e]
+  (let [[tag attrs :as e] (aget parent index)
+        [new-tag new-attrs] new-e
+        patch (cond
+                (and (nil? e) (vector? new-e))
+                (do "create-element"
+                    (aset parent index (normalize-element new-e)))
+                (and (nil? e) (text-element? new-e))
+                (do "create-element"
+                    (aset parent index (str new-e)))
+                (and (array? e) (vector? new-e))
+                (cond
+                  (and (not= tag new-tag) (not= attrs new-attrs))
+                  "replace-element"
+                  (not= tag new-tag)
+                  "patch-tag"
+                  (not= attrs new-attrs)
+                  "patch-attrs"
+                  :else nil)
+                (and (text-element? e) (text-element? new-e))
+                (if (= e new-e)
+                  e
+                  (do "patch-text-element" new-e))
+                :else (do "replace-element" new-e))]))
+
+(defn inccup-diff [parent prev index new-form]
+  (if (or (nil? new-form)
+          (and (seq? new-form) (empty? new-form)))
+    nil
+    (cond
+      (seq? new-form)
+      (let [[f & rest] new-form
+            updated (diff-element parent prev index f)]
+        (recur parent updated (inc index) rest))
+      (vector? new-form)
+      (let [updated (diff-element parent prev index new-form)
+            maybe-attrs (second new-form)]
+        (if (or (nil? maybe-attrs) (map? maybe-attrs))
+          (recur updated nil 2 (subvec new-form 2))
+          (recur updated nil 2 (subvec new-form 1))))
+      :else
+      (diff-element parent prev index new-form))))
 
 (comment
 

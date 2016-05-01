@@ -171,18 +171,18 @@
     (number? x) x
     (keyword? x) (name x)
     (symbol? x) (str x)
-    (vector? x) `(cljs.core/array ~@(map literal->cljs x))
+    (vector? x) (let [[tag attrs content] (util/normalize-element x)]
+                  `(cljs.core/array ~tag
+                                    ~(literal->cljs attrs)
+                                    ~@(map literal->cljs content)))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
                              (map literal->cljs (vals x))))
-    (coll? x) `(let [coll# (cljs.core/array ~@(map literal->cljs x))]
-                 (cljs.core/aset coll# "inccup/coll" true)
-                 coll#)
     :else (throw (IllegalArgumentException.
                   (str "Not a literal element: " x)))))
 
 (comment
-  (literal->cljs [:e {} "e"])
+  (literal->cljs '[:e.c {:class "c2"} "e"])
   )
 
 (defn- element-compile-strategy
