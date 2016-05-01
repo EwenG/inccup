@@ -426,67 +426,26 @@
 ;; compile-inc being a macro let us read the cljs analyzer env during macro
 ;; expansion when compile-inc is used inside a defhtml body
 (defmacro compile-inc [content]
-  (if *cache-static-counter*
+  (if *update-paths*
     ;; The html macro is used inside a defhtml
-    (let [static-counter *cache-static-counter*]
-      (set! *cache-static-counter* (inc *cache-static-counter*))
-      (let [[static update-path skips preds-and-exprs]
-            (compile-inc* content &env)
-            update-path-sym (gensym "update-path")
-            skips-sym (gensym "skips")
-            statics-sym (gensym "static")]
-        (if (nil? update-path) ;; literal content
-          `(or (safe-aget ~*cache-sym* "prev-result") '~statics-sym)
-          (do
-            (set! *update-paths*
-                  (into *update-paths* [update-path-sym `'~update-path]))
-            (set! *skips* (into *skips* [skips-sym skips]))
-            (set! *statics* (into *statics* [statics-sym static]))
-            `(ewen.inccup.incremental.compiler/update-with-cache
-              '~statics-sym ~*cache-sym* ~static-counter
-              '~update-path-sym '~skips-sym
-              (cljs.core/array ~@preds-and-exprs))))))
+    (let [[static update-path skips preds-and-exprs]
+          (compile-inc* content &env)
+          update-path-sym (gensym "update-path")
+          skips-sym (gensym "skips")
+          static-sym (gensym "static")]
+      (if (nil? update-path) ;; literal content
+        `(or (safe-aget ~*cache-sym* "prev-result") '~static-sym)
+        (do
+          (set! *update-paths*
+                (into *update-paths* [update-path-sym `'~update-path]))
+          (set! *skips* (into *skips* [skips-sym skips]))
+          (set! *statics* (into *statics* [static-sym static]))
+          `(ewen.inccup.incremental.compiler/sub-component
+            '~static-sym '~update-path-sym '~skips-sym
+            (cljs.core/array ~@preds-and-exprs)))))
     ;; The html macro is used outside a defhtml, there is no need for
     ;; caching
     content))
-
-#_(defn compile-inc-with-params [env content params update-fn-sym]
-  (let [env (reduce add-local-in-env env params)
-        tracked-vars (loop [tracked-vars {}
-                            params params]
-                       (if-let [param (first params)]
-                         (do (assert (contains? (:locals env) param))
-                             (recur (assoc tracked-vars param
-                                           {:env (get (:locals env) param)
-                                            :is-used false
-                                            :symbol param})
-                                    (rest params)))
-                         tracked-vars))]
-    (binding [*tracked-vars* tracked-vars
-              *cache-sym* (gensym "cache")
-              *params-changed-sym* (zipmap params (map gensym params))
-              *update-paths* []
-              *skips* []
-              *statics* []]
-      (let [[static update-path skips preds-and-exprs]
-            (compile-inc* content env)]
-        (if (nil? update-path) ;; literal content
-          `[~update-fn-sym (fn [~*cache-sym* ~@params
-                                ~@(vals *params-changed-sym*)]
-                             (or
-                              (ewen.inccup.incremental.compiler/safe-aget
-                               ~*cache-sym* "prev-result")
-                              ~static))]
-          `[~@*update-paths* ~@*skips* ~@*statics* skips# ~skips
-            update-path# '~update-path ~update-fn-sym
-            (fn [~*cache-sym* ~@params ~@(vals *params-changed-sym*)]
-              (->
-               (ewen.inccup.incremental.compiler/safe-aget
-                ~*cache-sym* "prev-result")
-               (or ~static)
-               (ewen.inccup.incremental.compiler/assoc-in-tree
-                update-path# skips#
-                (cljs.core/array ~@preds-and-exprs))))])))))
 
 (defn compile-inc-with-params [env content params update-fn-sym static-sym]
   (let [env (reduce add-local-in-env env params)
@@ -508,15 +467,15 @@
       (let [[static update-path skips preds-and-exprs]
             (compile-inc* content env)]
         (if (nil? update-path) ;; literal content
-          `[~static-sym  ~static
-            ~'_ (cljs.core/aset ~static-sym "inccup/prev-params" nil)
+          `[~static-sym  (doto ~static
+                           (cljs.core/aset "inccup/component" true))
             ~update-fn-sym (fn [prev-result# ~@(vals *params-changed-sym*)]
                              ~static-sym)]
           `[~@*update-paths* ~@*skips* ~@*statics*
             skips# ~skips
             update-path# '~update-path
-            ~static-sym ~static
-            ~'_ (cljs.core/aset ~static-sym "inccup/prev-params" nil)
+            ~static-sym (doto ~static
+                          (cljs.core/aset "inccup/component" true))
             ~update-fn-sym
             (fn [prev-result# ~@(vals *params-changed-sym*)]
               (let [prev-resut#
@@ -524,7 +483,7 @@
                            prev-result#)
                       ~static-sym
                       prev-result#)]
-                [~static-sym ~@(vals *params-changed-sym*)])
+                ~static-sym)
               #_(ewen.inccup.incremental.compiler/inccupdate
                  prev-result# update-path# skips#))])))))
 

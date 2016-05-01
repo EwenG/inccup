@@ -139,13 +139,15 @@
 (comment
   (delete-element component parent prev index element)
   (create-element component parent prev index element)
+  (create-component component parent prev index component)
+  (delete-element component parent prev index component)
   (update-element component parent prev index old new)
+  (update-component component parent prev index old new)
   (attr-update component parent prev index element key value new-value)
 
   )
 
 (defn remove-elements-from-to [parent prev from to]
-  (prn from " " to)
   (loop [index from
          prev prev]
     (when (< index to)
@@ -156,9 +158,54 @@
       (.pop parent)
       (recur (inc index)))))
 
+(defn component? [e]
+  (aget e "inccup/component"))
+
+(defn sub-component? [e]
+  (aget e "inccup/sub-component"))
+
+(defn match-component-types? [e new-e]
+  (identical? e (aget new-e "inccup/static")))
+
 (defn diff-element [parent prev index new-e]
   (let [[tag attrs :as e] (aget parent index)]
     (cond
+      #_(and (nil? e) (component? new-e))
+      #_(let [new-e (new-e first-render)]
+          (aset parent index new-e)
+          (create-component component parent prev index new-e)
+          new-e)
+      #_(and (component? e) (component? new-e))
+      ;; TODO Handle notification of sub-components
+      #_(if (match-component-types? e new-e)
+          (let [new-e (new-e e)]
+            (aset parent index new-e)
+            (update-component component parent prev index e new-e)
+            new-e)
+          (let [new-e (new-e first-render)]
+            (delete-component component parent prev index e)
+            (aset parent index new-e)
+            (create-component component parent prev index new-e)
+            new-e))
+      ;; e is not a component
+      #_(component? new-e)
+      #_(let [new-e (new-e first-render)]
+          (delete-element component parent prev index e)
+          (aset parent index (new-e first-render))
+          (create-element component parent prev index new-e)
+          new-e)
+      #_(and (component? e) (vector? new-e))
+      #_(let [new-e (normalize-element new-e)]
+          (delete-component component parent prev index e)
+          (aset parent index new-e)
+          (create-element component parent prev index new-e)
+        new-e)
+      #_(and (component? e) (text-element? new-e))
+      #_(let [new-e (str new-e)]
+          (delete-component component parent prev index e)
+          (aset parent index new-e)
+          (create-element component parent prev index new-e)
+          new-e)
       ;; e can only be nil when the parent element has new children
       (and (nil? e) (vector? new-e))
       (let [new-e (normalize-element new-e)]
@@ -216,6 +263,7 @@
              (js/Error.
               (str "Invalid elements: " e " " new-e))))))
 
+;; TODO Handle components diffing
 (defn inccup-diff [parent prev index new-form]
   (if (or (nil? new-form)
           (and (seq? new-form) (empty? new-form)))
@@ -305,17 +353,18 @@
 (def first-render (js-obj))
 
 (defn apply-update-fn [update-fn prev-result params params-nb static]
-  (let [prev-params (aget prev-result "inccup/prev-params")
+  (let [prev-params (aget prev-result "inccup/params")
         update-fn-params (array)]
     (.push update-fn-params prev-result)
     (.push update-fn-params)
     (if prev-params
       (dotimes [i params-nb]
         (.push update-fn-params
-               (not= (aget params i) (aget prev-params i))))
+               (not (identical? (aget params i) (aget prev-params i)))))
       (dotimes [i params-nb]
         (.push update-fn-params true)))
-    (apply update-fn update-fn-params)))
+    (doto (apply update-fn update-fn-params)
+      (aset "inccup/params" params))))
 
 #_(defn inccupdate
   [update-fn params params-nb cache-static-counter]
@@ -334,14 +383,9 @@
     (safe-aset cache "prev-result" result)
     result))
 
-(defn update-with-cache [static cache static-counter
-                         update-path skips preds-and-exprs]
-  (let [version (aget cache "version")
-        cache (-> (get-static-cache cache static-counter)
-                  new-dynamic-cache)
-        _ (safe-aset cache "version" version)
-        result (-> (safe-aget cache "prev-result")
-                   (or static)
-                   (assoc-in-tree update-path skips preds-and-exprs))]
-    (safe-aset cache "prev-result" result)
-    result))
+(defn sub-component [static update-path skips preds-and-exprs]
+  (doto (fn [prev-result]
+          static)
+    (aset "inccup/component" true)
+    (aset "inccup/sub-component" true)
+    (aset "inccup/static" static)))
