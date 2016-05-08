@@ -3,7 +3,8 @@
             [ewen.inccup.util :as util]
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
-            [clojure.set :refer [union]]))
+            [clojure.set :refer [union]]
+            [cljs.tagged-literals :refer [*cljs-data-readers*]]))
 
 (def ^:dynamic *cache-sym* nil)
 (def ^:dynamic *cache-static-counter* nil)
@@ -49,26 +50,19 @@
                           (vals *tracked-vars*))]
       [cljs-expanded (set used-vars)])))
 
-(defn update-dynamic-forms [expr path used-vars]
+(defn update-dynamic-forms [expr path used-vars form-type]
   (when *dynamic-forms*
-    (let [{prev-path :path
-           prev-var-deps :var-deps
-           prev-form :form} (peek *dynamic-forms*)]
-      (if (= path prev-path)
-        (set! *dynamic-forms*
-              (conj (pop *dynamic-forms*)
-                    {:path path
-                     :var-deps (union used-vars prev-var-deps)
-                     :form `(comp ~expr ~prev-form)}))
-        (set! *dynamic-forms*
-              (conj *dynamic-forms*
-                    {:path path
-                     :var-deps used-vars
-                     :form expr}))))))
+    (set! *dynamic-forms*
+          (conj *dynamic-forms*
+                {:path path
+                 :var-deps used-vars
+                 :form expr
+                 :type form-type}))))
 
 (defn compile-dynamic-expr [expr path]
   (let [[expr used-vars] (track-vars expr)]
-    (update-dynamic-forms expr path used-vars)
+    (update-dynamic-forms `(cljs.core/constantly ~expr)
+                          path used-vars "child")
     nil))
 
 (defn compile-attr-map
@@ -86,13 +80,13 @@
    (when attrs
      (let [[expr used-vars] (track-vars attrs)
            attr-form
-           `(ewen.inccup.incremental.compiler/maybe-merge-attributes
-             ~tag-attrs ~expr)
-           form `(if (map? ewen.inccup.incremental.compiler/*tmp-val*)
-                   nil
-                   ewen.inccup.incremental.compiler/*tmp-val*)]
-       (update-dynamic-forms attr-form attr-path used-vars)
-       (update-dynamic-forms form path used-vars)
+           `#(ewen.inccup.incremental.compiler/maybe-merge-attributes
+              ~tag-attrs ~expr)
+           form `#(if (map? ewen.inccup.incremental.compiler/*tmp-val*)
+                    nil
+                    ewen.inccup.incremental.compiler/*tmp-val*)]
+       (update-dynamic-forms attr-form attr-path used-vars "maybe-attrs")
+       (update-dynamic-forms form path used-vars "or-attrs-child")
        nil))))
 
 (defn- literal?
@@ -102,14 +96,11 @@
        (or (not (or (vector? x) (map? x)))
            (every? literal? x))))
 
-(defn dynamic-tag [tag tag-path attr-path]
+(defn dynamic-tag [tag path]
   {:pred [(not (literal? tag))]}
-  (let [[expr used-vars] (track-vars tag)
-        tag-form
-        `(let [[tag# attrs#] (util/normalize-element [~expr])]
-           (set! ewen.inccup.incremental.compiler/*tmp-val* attrs#)
-           tag#)]
-    (update-dynamic-forms tag-form tag-path used-vars)
+  (let [[expr used-vars] (track-vars tag)]
+    (update-dynamic-forms `(cljs.core/constantly ~expr)
+                          path used-vars "tag")
     nil))
 
 (defn- form-name
@@ -171,10 +162,15 @@
     (number? x) x
     (keyword? x) (name x)
     (symbol? x) (str x)
-    (vector? x) (let [[tag attrs content] (util/normalize-element x)]
-                  `(cljs.core/array ~tag
-                                    ~(literal->cljs attrs)
-                                    ~@(map literal->cljs content)))
+    (vector? x) (if (nil? (first x))
+                  (let [[tag attrs & content] x]
+                    `(cljs.core/array ~tag
+                                      ~(literal->cljs attrs)
+                                      ~@(map literal->cljs content)))
+                  (let [[tag attrs content] (util/normalize-element x)]
+                    `(cljs.core/array ~tag
+                                      ~(literal->cljs attrs)
+                                      ~@(map literal->cljs content))))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
                              (map literal->cljs (vals x))))
@@ -227,10 +223,10 @@
     (into [tag tag-attrs nil] (compile-seq rest-content path 3))))
 
 (defmethod compile-element ::default
-  [[tag attrs & rest-content] path]
-  (dynamic-tag tag (conj path 0) (conj path 1))
+  [[tag attrs & rest-content :as element] path]
+  (dynamic-tag tag (conj path 0))
   (maybe-attr-map attrs (conj path 1) (conj path 2) nil)
-  (if (nil? attrs)
+  (if (= 1 (count element))
     [nil {}]
     (into [nil {} nil] (compile-seq rest-content path 3))))
 
@@ -421,7 +417,7 @@
             update-path (dynamic-forms->update-path dyn-forms)
             skips (dynamic-forms->skips dyn-forms)
             preds-and-exprs (dynamic-forms->preds-and-exprs dyn-forms)]
-        [(literal->cljs static) update-path skips preds-and-exprs]))))
+        [static update-path skips preds-and-exprs]))))
 
 ;; compile-inc being a macro let us read the cljs analyzer env during macro
 ;; expansion when compile-inc is used inside a defhtml body
@@ -467,25 +463,67 @@
       (let [[static update-path skips preds-and-exprs]
             (compile-inc* content env)]
         (if (nil? update-path) ;; literal content
-          `[~static-sym  (doto ~static
-                           (cljs.core/aset "inccup/component" true))
-            ~update-fn-sym (fn [prev-result# ~@(vals *params-changed-sym*)]
+          `[~static-sym  ~static
+            ~update-fn-sym (fn [prev-result#
+                                ~@params
+                                ~@(vals *params-changed-sym*)]
                              ~static-sym)]
           `[~@*update-paths* ~@*skips* ~@*statics*
             skips# ~skips
             update-path# '~update-path
-            ~static-sym (doto ~static
-                          (cljs.core/aset "inccup/component" true))
+            ~static-sym ~static
             ~update-fn-sym
-            (fn [prev-result# ~@(vals *params-changed-sym*)]
-              (let [prev-resut#
-                    (if (= ewen.inccup.incremental.compiler/first-render
-                           prev-result#)
-                      ~static-sym
-                      prev-result#)]
-                ~static-sym)
-              #_(ewen.inccup.incremental.compiler/inccupdate
-                 prev-result# update-path# skips#))])))))
+            (fn [prev-result#
+                 ~@params
+                 ~@(vals *params-changed-sym*)]
+              (ewen.inccup.incremental.compiler/assoc-in-tree
+               prev-result# update-path# skips#
+               (cljs.core/array ~@preds-and-exprs)))])))))
+
+(defn var-deps->indexes [params var-deps]
+  (map #(.indexOf params %) var-deps))
+
+(defmacro component [forms]
+  (let [params (->> (:locals &env)
+                    (filter (comp not :local second))
+                    (filter (comp not :fn-var second)))
+        tracked-vars (loop [tracked-vars {}
+                            params params]
+                       (if-let [[param-name param-env] (first params)]
+                         (recur (assoc tracked-vars param-name
+                                       {:env param-env
+                                        :is-used false
+                                        :symbol param-name})
+                                (rest params))
+                         tracked-vars))
+        [static dynamic]
+        (binding [*env* &env
+                  *dynamic-forms* []
+                  *tracked-vars* tracked-vars]
+          [(compile-dispatch forms []) *dynamic-forms*])
+        static (literal->cljs static)
+        static-hash (str (hash static))
+        var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
+        coll->cljs-array (fn [coll] `(cljs.core/array ~@coll))]
+    `(ewen.inccup.incremental.compiler/Component.
+      (or (cljs.core/aget ewen.inccup.incremental.compiler/static
+                          ~static-hash)
+          (cljs.core/aset ewen.inccup.incremental.compiler/static
+                          ~static-hash ~static))
+      (cljs.core/array ~@(map (comp coll->cljs-array :path) dynamic))
+      (cljs.core/array ~@(->> dynamic
+                              (map :var-deps)
+                              (map var-deps->indexes)
+                              (map coll->cljs-array)))
+      (cljs.core/array ~@(map :form dynamic))
+      (cljs.core/array ~@(map :type dynamic))
+      (cljs.core/array ~@(keys tracked-vars))
+      false nil)))
+
+(alter-var-root #'*cljs-data-readers* assoc 'h
+                (fn [forms]
+                  {:pre [(vector? forms)]}
+                  `(component ~forms)))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
@@ -529,6 +567,7 @@
            ~(emitter/invoke-emit ast)))
       (emitter/invoke-emit ast))))
 
+
 (comment
   (binding [*tracked-vars* {'e false}]
     (emit* (ana-api/analyze (ana-api/empty-env)
@@ -539,4 +578,4 @@
 
 (comment
   (require '[clojure.pprint :refer [pprint pp]])
- )
+  )

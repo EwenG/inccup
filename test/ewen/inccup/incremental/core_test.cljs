@@ -2,42 +2,41 @@
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [html defhtml]]
             [ewen.inccup.incremental.compiler :refer
-             [first-render]]
+             [create-comp update-comp]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]))
 
 (set-print-fn! #(.log js/console %))
 
-(defhtml def1 [x] [:div#ii.cc {} x])
-(defhtml def2 [x y z] [:div#ii.cc x y z])
-(defhtml def3 [x y z] [x y z])
+(defn def1 [x] #h [:div#ii.cc {} x])
+(defn def2 [x y z] #h [:div#ii.cc x y z])
+(defn def3 [x y z] #h [x y z])
 
 (deftest test-defhtml
   (testing "defhtml"
-    (binding [*cache* (init-cache)]
-      (is (= (def1 "e")
-             ["div" {:id "ii" :class "cc"} "e"]))
-      (is (= (def1 [:p])
-             ["div" {:id "ii" :class "cc"} [:p]])))
-    (binding [*cache* (init-cache)]
-      (is (= (def2 {:e "e"} [:p] "r")
+    (let [comp (def1 "e")]
+      (is (= (js->clj (create-comp comp))
+             ["div" {"id" "ii" "class" "cc"} "e"]))
+      #_(is (= (update-comp (def1 [:p]) comp)
+               ["div" {:id "ii" :class "cc"} [:p]])))
+    (let [comp (def2 {:e "e"} [:p] "r")]
+      (is (= (js->clj (create-comp comp))
              ["div" {:id "ii", :class "cc", :e "e"} nil [:p] "r"]))
-      (is (= (def2 [:div] [:p] 3)
-             ["div" {:id "ii", :class "cc"} [:div] [:p] 3])))
-    (binding [*cache* (init-cache)]
-      (is (= (def3 'p#ii.cc {:e "e"} "t")
+      #_(is (= (update-comp (def2 [:div] [:p] 3) comp)
+               ["div" {:id "ii", :class "cc"} [:div] [:p] 3]))
+      (create-comp comp))
+    (let [comp (def3 'p#ii.cc {:e "e"} "t")]
+      (is (= (js->clj (create-comp comp))
              ["p" {:id "ii", :class "cc", :e "e"} nil "t"]))
-      (is (= (def3 'div {:f "f"} "t")
+      #_(is (= (update-comp (def3 'div {:f "f"} "t") comp)
              ["div" {:f "f"} nil "t"]))
-      (is (= (def3 'div.e [:p] "t")
+      #_(is (= (update-comp (def3 'div.e [:p] "t") comp)
              ["div" {:class "e"} [:p] "t"])))))
 
-(def cache-seq (atom []))
+#_(defhtml template1 [x] [:p {} x])
+#_(defhtml template2 [x y] [:p {} x (html [:p x]) (template1 y)])
+#_(defhtml template3 [x] [:p {} (count x) (for [y x] (template1 y))])
 
-(defhtml template1 [x] [:p {} x])
-(defhtml template2 [x y] [:p {} x (html [:p x]) (template1 y)])
-(defhtml template3 [x] [:p {} (count x) (for [y x] (template1 y))])
-
-(deftest test-cache
+#_(deftest test-cache
     (testing "cache"
       (binding [*cache* (init-cache)]
         (reset! cache-seq [])
@@ -184,7 +183,7 @@
 
 
 (comment
-  (defhtml def1 [x] [:div#ii.cc {} x])
-  ((def1 "e") first-render)
+  (defn def1 [x y] #h [:div#ii.cc {} [:div x y]])
+  (create-comp (def1 {:e "e"} "g"))
 
         )

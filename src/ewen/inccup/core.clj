@@ -52,24 +52,10 @@
             `(let ~(compile-inc-with-params
                     &env content params update-fn-sym static-sym)
                (defn ~name ~args
-                 (doto
-                   (fn [prev-result#]
-                     (ewen.inccup.incremental.compiler/apply-update-fn
-                      ~update-fn-sym prev-result#
-                      (cljs.core/array ~@params) ~(count params)
-                      ~static-sym))
-                   (aset "inccup/component" true)
-                   (aset "inccup/static" ~static-sym)
-                   (aset "inccup/params" (cljs.core/array ~@params))))))
-          #_(let [params (extract-params args)
-                  update-fn-sym (gensym "update-fn")]
-              (binding [*cache-static-counter* 0]
-                `(let ~(compile-inc-with-params
-                        &env content params update-fn-sym)
-                   (defn ~name ~args
-                     (ewen.inccup.incremental.compiler/inccupdate
-                      ~update-fn-sym (cljs.core/array ~@params)
-                      ~(count params) ~*cache-static-counter*)))))
+                 (ewen.inccup.incremental.compiler/Component.
+                  ~static-sym false ~update-fn-sym
+                  (cljs.core/array ~@params) ~(count params)
+                  nil))))
           mode
           (binding [*html-mode* (or mode *html-mode*)]
             `(binding [*html-mode* (or ~mode *html-mode*)]
