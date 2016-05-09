@@ -16,6 +16,7 @@
 (def ^:dynamic *update-paths* [])
 (def ^:dynamic *skips* [])
 (def ^:dynamic *statics* [])
+(defonce component-id (atom 0))
 
 (defn new-local-binding [name env]
   {:name name
@@ -155,30 +156,30 @@
       (not (util/unevaluated? x))
       (not-hint? x java.util.Map)))
 
-(defn literal->cljs [x]
+(defn literal->js [x]
   (cond
     (nil? x) nil
     (string? x) x
-    (number? x) x
+    (number? x) (str x)
     (keyword? x) (name x)
     (symbol? x) (str x)
     (vector? x) (if (nil? (first x))
                   (let [[tag attrs & content] x]
                     `(cljs.core/array ~tag
-                                      ~(literal->cljs attrs)
-                                      ~@(map literal->cljs content)))
+                                      ~(literal->js attrs)
+                                      ~@(map literal->js content)))
                   (let [[tag attrs content] (util/normalize-element x)]
                     `(cljs.core/array ~tag
-                                      ~(literal->cljs attrs)
-                                      ~@(map literal->cljs content))))
+                                      ~(literal->js attrs)
+                                      ~@(map literal->js content))))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
-                             (map literal->cljs (vals x))))
+                             (map literal->js (vals x))))
     :else (throw (IllegalArgumentException.
                   (str "Not a literal element: " x)))))
 
 (comment
-  (literal->cljs '[:e.c {:class "c2"} "e"])
+  (literal->js '[:e.c {:class "c2"} "e"])
   )
 
 (defn- element-compile-strategy
@@ -209,7 +210,7 @@
   [[tag attrs & content] path]
   (let [[tag attrs _] (util/normalize-element [tag attrs])
         compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (into [tag compiled-attrs] (compile-seq content path 2))))
+    (into [tag (or compiled-attrs {})] (compile-seq content path 2))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content] path]
@@ -220,12 +221,12 @@
   (let [[tag tag-attrs [first-content & rest-content]]
         (util/normalize-element element)]
     (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
-    (into [tag tag-attrs nil] (compile-seq rest-content path 3))))
+    (into [tag (or tag-attrs {}) nil] (compile-seq rest-content path 3))))
 
 (defmethod compile-element ::default
   [[tag attrs & rest-content :as element] path]
   (dynamic-tag tag (conj path 0))
-  (maybe-attr-map attrs (conj path 1) (conj path 2) nil)
+  (maybe-attr-map attrs (conj path 1) (conj path 2) {})
   (if (= 1 (count element))
     [nil {}]
     (into [nil {} nil] (compile-seq rest-content path 3))))
@@ -501,15 +502,11 @@
                   *dynamic-forms* []
                   *tracked-vars* tracked-vars]
           [(compile-dispatch forms []) *dynamic-forms*])
-        static (literal->cljs static)
-        static-hash (str (hash static))
+        static (literal->js static)
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         coll->cljs-array (fn [coll] `(cljs.core/array ~@coll))]
     `(ewen.inccup.incremental.compiler/Component.
-      (or (cljs.core/aget ewen.inccup.incremental.compiler/static
-                          ~static-hash)
-          (cljs.core/aset ewen.inccup.incremental.compiler/static
-                          ~static-hash ~static))
+      (cljs.core/constantly ~static)
       (cljs.core/array ~@(map (comp coll->cljs-array :path) dynamic))
       (cljs.core/array ~@(->> dynamic
                               (map :var-deps)
@@ -518,7 +515,7 @@
       (cljs.core/array ~@(map :form dynamic))
       (cljs.core/array ~@(map :type dynamic))
       (cljs.core/array ~@(keys tracked-vars))
-      false nil)))
+      ~(swap! component-id inc) false nil)))
 
 (alter-var-root #'*cljs-data-readers* assoc 'h
                 (fn [forms]

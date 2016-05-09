@@ -2,188 +2,155 @@
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [html defhtml]]
             [ewen.inccup.incremental.compiler :refer
-             [create-comp update-comp]]
-            [cljs.pprint :refer [pprint] :refer-macros [pp]]))
+             [Component create-comp update-comp]]
+            [cljs.pprint :refer [pprint] :refer-macros [pp]]
+            [goog.array])
+  (:require-macros [ewen.inccup.incremental.core-test-macros])
+  (:refer-clojure :exclude [-equiv]))
 
 (set-print-fn! #(.log js/console %))
 
+(declare inccup=)
+
+(defprotocol InccupEquiv
+  (-equiv [o other]))
+
+(deftype ComponentValue [value]
+  InccupEquiv
+  (-equiv [_ other]
+    (if (instance? Component other)
+      (inccup= value (.-value other))
+      false)))
+
+(extend-type Component
+  IPrintWithWriter
+  (-pr-writer [c writer opts]
+    (-write writer "#inccup/ComponentValue ")
+    (pr-writer (.-value c) writer opts)))
+
+(extend-type Component
+  InccupEquiv
+  (-equiv [c other]
+    (if (instance? ComponentValue other)
+      (inccup= (.-value c) (.-value other))
+      false)))
+
+(extend-type array
+  InccupEquiv
+  (-equiv [a other]
+    (if (instance? js/Array other)
+      (goog.array/equals a other inccup=)
+      false)))
+
+(extend-type object
+  InccupEquiv
+  (-equiv [o other]
+    (if (instance? js/Object other)
+      (let [equal? (volatile! true)]
+        (goog.object/forEach
+         o (fn [v k _]
+             (when-not (and (goog.object/containsKey other k)
+                            (inccup= v (aget other k)))
+               (vreset! equal? false))))
+        (goog.object/forEach
+         other (fn [v k _]
+                 (when-not (goog.object/containsKey o k)
+                   (vreset! equal? false))))
+        @equal?)
+      false)))
+
+(extend-type default
+  InccupEquiv
+  (-equiv [x o] (= x o)))
+
+(defn inccup=
+  ([x] true)
+  ([x y]
+   (cond
+     (nil? x)
+     (nil? y)
+     (implements? IEquiv x)
+     (cljs.core/-equiv x y)
+     :else
+     (-equiv x y)))
+  ([x y & more]
+   (if (inccup= x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (inccup= y (first more)))
+     false)))
+
 (defn def1 [x] #h [:div#ii.cc {} x])
-(defn def2 [x y z] #h [:div#ii.cc x y z])
-(defn def3 [x y z] #h [x y z])
+(defn def2 [x y z] #h [x y z])
 
-(deftest test-defhtml
-  (testing "defhtml"
+(deftest test1
+  (testing "test1"
     (let [comp (def1 "e")]
-      (is (= (js->clj (create-comp comp))
-             ["div" {"id" "ii" "class" "cc"} "e"]))
-      #_(is (= (update-comp (def1 [:p]) comp)
-               ["div" {:id "ii" :class "cc"} [:p]])))
-    (let [comp (def2 {:e "e"} [:p] "r")]
-      (is (= (js->clj (create-comp comp))
-             ["div" {:id "ii", :class "cc", :e "e"} nil [:p] "r"]))
-      #_(is (= (update-comp (def2 [:div] [:p] 3) comp)
-               ["div" {:id "ii", :class "cc"} [:div] [:p] 3]))
-      (create-comp comp))
-    (let [comp (def3 'p#ii.cc {:e "e"} "t")]
-      (is (= (js->clj (create-comp comp))
-             ["p" {:id "ii", :class "cc", :e "e"} nil "t"]))
-      #_(is (= (update-comp (def3 'div {:f "f"} "t") comp)
-             ["div" {:f "f"} nil "t"]))
-      #_(is (= (update-comp (def3 'div.e [:p] "t") comp)
-             ["div" {:class "e"} [:p] "t"])))))
+      (is (inccup= @(create-comp comp)
+                   #js ["div" #js {:id "ii", :class "cc"} "e"]))
+      (is (inccup= @(update-comp (def1 3) comp)
+                   #js ["div" #js {:id "ii", :class "cc"} "3"])))
+    (let [comp (def2 :p {:e "e"} "t")]
+      (is (inccup= @(create-comp comp)
+                   #js ["p" #js {:e "e"} nil "t"]))
+      (update-comp (def2 'div {:f "f"} "t") comp)
+      (is (inccup= @comp
+                   #js ["div" #js {:f "f"} nil "t"]))
+      (update-comp (def2 'div 5 "f") comp)
+      @comp
+      (is (inccup= @comp
+             #js ["div" #js {} "5" "f"])))))
 
-#_(defhtml template1 [x] [:p {} x])
-#_(defhtml template2 [x y] [:p {} x (html [:p x]) (template1 y)])
-#_(defhtml template3 [x] [:p {} (count x) (for [y x] (template1 y))])
+(defn template1 [x] #h[:p#ii.cc {:e x :class x} x "4"])
+(defn template2 [x z] #h [:p {} (count x) #h [:p z]
+                          (for [y x] (template1 y))])
 
-#_(deftest test-cache
-    (testing "cache"
-      (binding [*cache* (init-cache)]
-        (reset! cache-seq [])
-        (let [res1 (template2 1 2)
-              _ (swap! cache-seq conj (js->clj *cache*))
-              res2 (template2 3 4)
-              _ (swap! cache-seq conj (js->clj *cache*))
-              res3 (template2 3 4)]
-          (is (not= res1 res3))
-          (is (identical? res2 res3))
-          (is (identical? (get-in res1 [4 1]) (get-in res2 [4 1])))
-          @cache-seq
-          (is
-           (=
-            @cache-seq
-            '[{"sub-cache"
-               [{"dynamic-counter" 1,
-                 "dynamic-array" [{"sub-cache" [],
-                                   "version" 1,
-                                   "prev-result" ["p" {} 1]}]}
-                {"dynamic-counter" 1,
-                 "dynamic-array"
-                 [{"sub-cache" [],
-                   "version" 1,
-                   "params" [2],
-                   "prev-result" ["p" {} 2]}]}],
-               "version" 1,
-               "params" [1 2],
-               "prev-result" ["p" {} 1 ["p" {} 1] ["p" {} 2]]}
-              {"sub-cache"
-               [{"dynamic-counter" 1,
-                 "dynamic-array"
-                 [{"sub-cache" [],
-                   "version" 2,
-                   "prev-result" ["p" {} 3]}]}
-                {"dynamic-counter" 1,
-                 "dynamic-array"
-                 [{"sub-cache" [],
-                   "version" 2,
-                   "prev-result" ["p" {} 4],
-                   "params" [4]}]}],
-               "version" 2,
-               "prev-result" ["p" {} 3 ["p" {} 3] ["p" {} 4]],
-               "params" [3 4]}])))))
-
-  (testing "dynamic-cache"
-      (binding [*cache* (init-cache)]
-        (reset! cache-seq [])
-        (let [res1 (template3 [1 2])
-              _ (prn res1)
-              _ (clean-cache *cache*)
-              _ (swap! cache-seq conj (js->clj *cache*))
-              res2 (template3 [1 2])
-              _ (prn res2)
-              _ (clean-cache *cache*)
-              res3 (template3 [1 2 3])
-              _ (prn res3)
-              _ (clean-cache *cache*)
-              _ (swap! cache-seq conj (js->clj *cache*))
-              res4 (template3 [6])
-              _ (prn res4)
-              _ (clean-cache *cache*)
-              _ (swap! cache-seq conj (js->clj *cache*))]
-          (identical? res1 res2)
-          (is (not= res1 res3 res4))
-          (is
-           (= @cache-seq
-              '[{"sub-cache"
-                 [{"dynamic-counter" 0, "dynamic-array" []}
-                  {"dynamic-counter" 2,
-                   "dynamic-array"
-                   [{"sub-cache" [],
-                     "version" 1,
-                     "params" [1],
-                     "prev-result" ["p" {} 1]}
-                    {"sub-cache" [],
-                     "version" 1,
-                     "params" [2],
-                     "prev-result" ["p" {} 2]}]}],
-                 "version" 1,
-                 "params" [[1 2]],
-                 "prev-result" ["p" {} 2 (["p" {} 1] ["p" {} 2])]}
-                {"sub-cache"
-                 [{"dynamic-counter" 0, "dynamic-array" []}
-                  {"dynamic-counter" 3,
-                   "dynamic-array"
-                   [{"sub-cache" [],
-                     "version" 3,
-                     "params" [1],
-                     "prev-result" ["p" {} 1]}
-                    {"sub-cache" [],
-                     "version" 3,
-                     "params" [2],
-                     "prev-result" ["p" {} 2]}
-                    {"sub-cache" [],
-                     "version" 3,
-                     "params" [3],
-                     "prev-result" ["p" {} 3]}]}],
-                 "version" 3,
-                 "params" [[1 2 3]],
-                 "prev-result"
-                 ["p" {} 3 (["p" {} 1] ["p" {} 2] ["p" {} 3])]}
-                {"sub-cache"
-                 [{"dynamic-counter" 0, "dynamic-array" []}
-                  {"dynamic-counter" 1,
-                   "dynamic-array"
-                   [{"sub-cache" [],
-                     "version" 4,
-                     "params" [6],
-                     "prev-result" ["p" {} 6]}]}],
-                 "version" 4,
-                 "params" [[6]],
-                 "prev-result" ["p" {} 1 (["p" {} 6])]}]))))))
-
-
+(deftest test2
+  (testing "test2"
+    (let [comp (template2 (list 1 2) nil)]
+      (is (inccup= @(create-comp comp))
+          #js ["p" #js {} "2"
+               #inccup/ComponentValue #js ["p" #js {} nil]
+               #js [#inccup/ComponentValue
+                    #js ["p" "{:id \"ii\", :class \"cc 1\", :e 1}"
+                         "1" "4"]
+                    #inccup/ComponentValue
+                    #js ["p" "{:id \"ii\", :class \"cc 2\", :e 2}"
+                         "2" "4"]]])
+      (update-comp (template2 (list 1 #h [:div] "e") {:id 3}) comp)
+      (is (inccup=
+           @comp
+           #js ["p" #js {} "3"
+                #inccup/ComponentValue #js ["p" #js {:id "3"} nil]
+                #js [#inccup/ComponentValue
+                     #js ["p" "{:id \"ii\", :class \"cc 1\", :e 1}" "1" "4"]
+                     #inccup/ComponentValue
+                     #js ["p"
+                          "{:id \"ii\", :class \"cc [object Object]\", :e #inccup/ComponentValue nil}"
+                          #inccup/ComponentValue #js ["div" #js {}] "4"]
+                     #inccup/ComponentValue
+                     #js ["p" "{:id \"ii\", :class \"cc e\", :e \"e\"}" "e" "4"]]]))
+      (update-comp (template2 (list nil) {:class "4" :f "f"}) comp)
+      (is (inccup=
+           @comp
+           #js ["p" #js {} "1"
+                #inccup/ComponentValue
+                #js ["p" #js {:class "4", :f "f"} nil]
+                #js [#inccup/ComponentValue
+                     #js ["p" "{:id \"ii\", :class \"cc \", :e nil}"
+                          nil "4"]]])))))
 
 
 (comment
   (run-tests 'ewen.inccup.incremental.core-test)
-
-  (defhtml template2 [x y] [:p {} ^{:ewen.inccup.core/id 1} (template1 y)])
-  )
-
-(comment
-
-  (defhtml template1 [x] [:p {} x])
-  (defhtml template3 [x] [:p {} (count x) (for [y x] (template1 y))])
-
-  (binding [*cache* (init-cache)]
-
-    (let [res1 (template3 [1 2])
-          _ (prn res1)
-          res2 (template3 [1 2])
-          _ (prn res2)
-          res3 (template3 [1 2 3])
-          _ (prn res3)
-          res4 (template3 [6])
-          _ (prn res4)]
-      res4
-      (clean-cache *cache*)
-      (js->clj *cache*)))
-
   )
 
 
 (comment
-  (defn def1 [x y] #h [:div#ii.cc {} [:div x y]])
-  (create-comp (def1 {:e "e"} "g"))
+  (defn def1 [x] #h [:div {} x])
+  @(create-comp (def1 #h [:div]))
+
+  (inccup= @(create-comp (def1 #h [:div]))
+           #js ["div" #js {} #inccup/ComponentValue #js ["div" #js {}]])
 
         )
