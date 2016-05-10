@@ -41,7 +41,8 @@
 (defn emit-do-content [{:keys [statements ret]}]
   (into (list (emit* ret)) (map emit* statements)))
 
-(defn invoke-emit [{:keys [f args] :as ast}]
+(defmethod emit* :invoke
+  [{:keys [f args] :as ast}]
   (conj (doall (map emit* args)) (emit* f)))
 
 (defmethod emit* :let

@@ -1,9 +1,7 @@
 (ns ewen.inccup.core
   (:require [ewen.inccup.string.compiler-macros
              :refer [compile-html maybe-convert-raw-string]]
-            [ewen.inccup.incremental.compiler-macros
-             :refer [compile-inc compile-inc-with-params extract-params
-                     *cache-static-counter*]]
+            [ewen.inccup.incremental.compiler-macros]
             [ewen.inccup.util
              :refer [default-output-format name-with-attributes cljs-env?
                      *html-mode* *output-format*]]))
@@ -24,7 +22,7 @@
             "Invalid output format")
     [{:mode mode :output-format output-format} (first content)]))
 
-(defmacro html
+#_(defmacro html
   [& options-content]
   (let [[{:keys [mode output-format]} content] (options-with-content
                                                 options-content &env)]
@@ -37,7 +35,7 @@
           :else
           (maybe-convert-raw-string compile-html content))))
 
-(defmacro defhtml
+#_(defmacro defhtml
   "Define a function, but wrap its output in an implicit html macro."
   [name & meta-body]
   (let [[name [args & options-content]] (name-with-attributes

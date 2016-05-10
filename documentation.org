@@ -1,24 +1,3 @@
-* Cache
-
-A dynamic counter and a dynamic array of static cache objects
-The counter:
-
-- Is incremented on every render. When the counter is > the size of the dynamic array, the dynamic array growths. A component resets the counter of its children to 0 before it returns. When a counter is reseted to 0 before it reached the size of the dynamic array, then the dynamic array is shrinked.
-
-The static object contains:
-
-- The last value of the function parameters
-- The last function result (a tree of inccup forms)
-- An array containing all sub caches of all sub components
-
-When compiling hiccup forms, a new static cache object is created for every use of the html macro or use of a function defined with the defhtml macro. The number of static cache object is computed at macro expansion time. When calling a function defined with the defhtml macro, the cache object is passed to the underlying sub component by dynamically binding it during the call to the defhtml function. The defhtml function then lexically binds it. During the call to the defhtml function, their is no lazy eval so dynamic binding is safe. Inside the body of the defhtml function, their may be lazy eval so dynamic binding is unsafe. The *cache* object is used to pass the cache down the tree. When receiving the *cache* var from a downstream component, one must immediately rebind it because *cache* is mutable and may be modified at any moment by a component through lazy eval.
-
-Don't try to print the cache inside functions that compute the cache. The cache may contain lazy seqs, the realization of lazy seq may need to run the functions that print the cache -> cyclic dependency !
-
-* Children reconciliation
-
-Add a special keyword parameter to defhtmls. When a child is passed an ID, it is given an ID HTML parameter. ID must be unique within a parent root. The parent root is defined by setting metadata on a defhtml. A HTML class is added to such root node.
-
 * Container tags / void tags
 
 When outputting datastructures, inccup treats all tags as container tags,

@@ -1,6 +1,6 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
-            [ewen.inccup.core :refer-macros [html defhtml]]
+            [ewen.inccup.core]
             [ewen.inccup.incremental.compiler :refer
              [Component create-comp update-comp]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
