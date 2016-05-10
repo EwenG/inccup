@@ -508,11 +508,11 @@
 (defn inccup-seq? [x]
   (and (array? x) (aget x "inccup/seq")))
 
-(defn strip-inccup-seq [x index]
+(defn nil-inccup-seq-from [x index]
   (loop [index index
          l (count x)]
     (when (< index l)
-      (.pop x)
+      (aset x index nil)
       (recur (inc index) l))))
 
 (declare diff-children)
@@ -548,7 +548,7 @@
                     (do (diff-children prev-form index f)
                         (recur (rest form) (inc index)))
                     (when (< index (count prev-form))
-                      (strip-inccup-seq prev-form index))))
+                      (nil-inccup-seq-from prev-form index))))
                 (nil? prev-form)
                 (create-inccup-seq element index form)
                 (instance? Component prev-form)

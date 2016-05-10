@@ -138,7 +138,7 @@
                 #js ["p" #js {:class "4", :f "f"} nil]
                 #js [#inccup/ComponentValue
                      #js ["p" "{:id \"ii\", :class \"cc \", :e nil}"
-                          nil "4"]]])))))
+                          nil "4"] nil nil]])))))
 
 
 (comment
