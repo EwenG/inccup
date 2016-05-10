@@ -512,10 +512,10 @@
                               (map :var-deps)
                               (map var-deps->indexes)
                               (map coll->cljs-array)))
-      (cljs.core/array ~@(map :form dynamic))
       (cljs.core/array ~@(map :type dynamic))
+      (cljs.core/array ~@(map :form dynamic))
       (cljs.core/array ~@(keys tracked-vars))
-      ~(swap! component-id inc) false nil)))
+      ~(swap! component-id inc) nil)))
 
 (alter-var-root #'*cljs-data-readers* assoc 'h
                 (fn [forms]

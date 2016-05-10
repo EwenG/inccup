@@ -617,8 +617,18 @@
     (recur (aget arr (aget path index)) path count (inc index))
     arr))
 
-(deftype Component [static paths var-deps forms form-types
-                    params id sub-component ^:mutable value]
+(defn identical-params? [deps-indexes prev-params params]
+  (loop [deps-indexes deps-indexes
+         index 0]
+    (if-let [deps-index (aget deps-indexes index)]
+      (if (identical? (aget prev-params deps-index)
+                      (aget params deps-index))
+        (recur deps-indexes (inc index))
+        false)
+      true)))
+
+(deftype Component [static paths var-deps form-types forms
+                    params id ^:mutable value]
   IDeref
   (-deref [_] value)
   IComponent
@@ -641,12 +651,16 @@
            paths paths
            index 0]
       (if-let [path (aget paths index)]
-        (let [dec-path-length (dec (count path))
-              leaf (aget-in tree path dec-path-length 0)]
-          (update-form-dispatch leaf
-                                (aget path dec-path-length)
-                                (aget forms index)
-                                (aget form-types index))
+        (do
+          (when-not (identical-params? (aget var-deps index)
+                                       (.-params prev-comp)
+                                       params)
+            (let [dec-path-length (dec (count path))
+                  leaf (aget-in tree path dec-path-length 0)]
+              (update-form-dispatch leaf
+                                    (aget path dec-path-length)
+                                    (aget forms index)
+                                    (aget form-types index))))
           (recur tree paths (inc index)))
         prev-comp))))
 
