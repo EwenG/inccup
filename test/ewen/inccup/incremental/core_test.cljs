@@ -90,7 +90,7 @@
   nil)
 
 (defn create-element [element index]
-  nil)
+  )
 
 (defn will-update [comp]
   nil)

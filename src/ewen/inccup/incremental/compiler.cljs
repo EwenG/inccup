@@ -37,7 +37,7 @@
 
 (declare diff-children)
 
-(defn create-inccup-seq [element index form
+(defn create-inccup-seq [element index form current-comp
                          update-tag update-attribute
                          remove-element create-element
                          will-update did-update
@@ -48,14 +48,14 @@
          form form
          index 0]
     (when-let [f (first form)]
-      (diff-children inccup-seq index f
+      (diff-children inccup-seq index f current-comp
                      update-tag update-attribute
                      remove-element create-element
                      will-update did-update
                      mount-comp unmount-comp)
       (recur inccup-seq (rest form) (inc index)))))
 
-(defn diff-children [element index form
+(defn diff-children [element index form current-comp
                      update-tag update-attribute
                      remove-element create-element
                      will-update did-update
@@ -75,9 +75,9 @@
                                   remove-element create-element
                                   will-update did-update
                                   mount-comp unmount-comp)]
-                    #_(unmount-comp element index (aget element index))
+                    (unmount-comp element index (aget element index))
                     (aset element index new-comp)
-                    #_(mount-comp element index new-comp)))
+                    (mount-comp element index new-comp)))
                 (inccup-seq? prev-form)
                 (let [new-comp (create-comp form
                                             update-tag update-attribute
@@ -87,7 +87,7 @@
                   (pop-inccup-seq-from
                    prev-form 0 remove-element unmount-comp)
                   (aset element index new-comp)
-                  #_(mount-comp element index new-comp))
+                  (mount-comp element index new-comp))
                 (nil? prev-form)
                 (let [new-comp (create-comp form
                                             update-tag update-attribute
@@ -95,7 +95,7 @@
                                             will-update did-update
                                             mount-comp unmount-comp)]
                   (aset element index new-comp)
-                  #_(mount-comp element index new-comp))
+                  (mount-comp element index new-comp))
                 :else
                 (let [new-comp (create-comp
                                 form
@@ -105,13 +105,13 @@
                                 mount-comp unmount-comp)]
                   (remove-element element index)
                   (aset element index new-comp)
-                  #_(mount-comp element index new-comp)))
+                  (mount-comp element index new-comp)))
           (seq? form)
           (cond (inccup-seq? prev-form)
                 (loop [form form
                        index 0]
                   (if-let [f (first form)]
-                    (do (diff-children prev-form index f
+                    (do (diff-children prev-form index f current-comp
                                        update-tag update-attribute
                                        remove-element create-element
                                        will-update did-update
@@ -121,15 +121,15 @@
                       (pop-inccup-seq-from
                        prev-form index remove-element unmount-comp))))
                 (nil? prev-form)
-                (create-inccup-seq element index form
+                (create-inccup-seq element index form current-comp
                                    update-tag update-attribute
                                    remove-element create-element
                                    will-update did-update
                                    mount-comp unmount-comp)
                 (instance? Component prev-form)
                 (do
-                  #_(unmount-comp element index prev-form)
-                  (create-inccup-seq element index form
+                  (unmount-comp element index prev-form)
+                  (create-inccup-seq element index form current-comp
                                      update-tag update-attribute
                                      remove-element create-element
                                      will-update did-update
@@ -137,7 +137,7 @@
                 :else
                 (do
                   (remove-element element index)
-                  (create-inccup-seq element index form
+                  (create-inccup-seq element index form current-comp
                                      update-tag update-attribute
                                      remove-element create-element
                                      will-update did-update
@@ -165,7 +165,7 @@
                   (create-element element index (str form)))
                 (instance? Component prev-form)
                 (do
-                  #_(unmount-comp element index prev-form)
+                  (unmount-comp element index prev-form)
                   (aset element index (str form))
                   (create-element element index (str form)))
                 (inccup-seq? prev-form)
@@ -205,6 +205,7 @@
                      (update-attribute element index k v nil)))))))
 
 (defn update-form-dispatch [element index form form-type
+                            current-comp
                             update-tag update-attribute
                             remove-element create-element
                             will-update did-update
@@ -216,13 +217,13 @@
               (aset element index new-tag)
               (update-tag element old-tag new-tag)))
     "maybe-attrs" (diff-attrs element index (form) update-attribute)
-    "or-attrs-child" (diff-children element index (form)
+    "or-attrs-child" (diff-children element index (form) current-comp
                                     update-tag update-attribute
                                     remove-element create-element
                                     will-update did-update
                                     mount-comp unmount-comp)
     "attrs" (diff-attrs element index (form) update-attribute)
-    "child" (diff-children element index (form)
+    "child" (diff-children element index (form) current-comp
                            update-tag update-attribute
                            remove-element create-element
                            will-update did-update
@@ -284,6 +285,7 @@
                                 (aget path dec-path-length)
                                 (aget forms index)
                                 (aget form-types index)
+                                c
                                 update-tag update-attribute
                                 remove-element create-element
                                 will-update did-update
@@ -291,7 +293,7 @@
           (recur static paths (inc index)))
         (set! value static)))
     c)
-  (update-comp [_ prev-comp
+  (update-comp [c prev-comp
                 update-tag update-attribute
                 remove-element create-element
                 will-update did-update
@@ -309,6 +311,7 @@
                                   (aget path dec-path-length)
                                   (aget forms index)
                                   (aget form-types index)
+                                  c
                                   update-tag update-attribute
                                   remove-element create-element
                                   will-update did-update
