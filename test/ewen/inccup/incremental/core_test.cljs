@@ -1,8 +1,8 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core]
-            [ewen.inccup.incremental.compiler :refer
-             [Component create-comp update-comp]]
+            [ewen.inccup.incremental.compiler :as comp
+             :refer [Component]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array])
   (:require-macros [ewen.inccup.incremental.core-test-macros])
@@ -80,6 +80,42 @@
        (inccup= y (first more)))
      false)))
 
+(defn update-tag [element index old-tag new-tag]
+  nil)
+
+(defn update-attribute [element index k old-v new-v]
+  nil)
+
+(defn remove-element [element index]
+  nil)
+
+(defn create-element [element index]
+  nil)
+
+(defn will-update [comp]
+  nil)
+
+(defn did-update [comp]
+  nil)
+
+(defn mount-comp [comp]
+  nil)
+
+(defn unmount-comp [comp]
+  nil)
+
+(defn create-comp [c]
+  (comp/create-comp
+   c
+   update-tag update-attribute remove-element create-element
+   will-update did-update mount-comp unmount-comp))
+
+(defn update-comp [c prev-c]
+  (comp/update-comp
+   c prev-c
+   update-tag update-attribute remove-element create-element
+   will-update did-update mount-comp unmount-comp))
+
 (defn def1 [x] #h [:div#ii.cc {} x])
 (defn def2 [x y z] #h [x y z])
 
@@ -121,15 +157,18 @@
       (is (inccup=
            @comp
            #js ["p" #js {} "3"
-                #inccup/ComponentValue #js ["p" #js {:id "3"} nil]
+                #inccup/ComponentValue
+                #js ["p" #js {:id "3"} nil]
                 #js [#inccup/ComponentValue
-                     #js ["p" "{:id \"ii\", :class \"cc 1\", :e 1}" "1" "4"]
+                     #js ["p" #js {:id "ii", :class "cc 1", :e "1"} "1" "4"]
                      #inccup/ComponentValue
                      #js ["p"
-                          "{:id \"ii\", :class \"cc [object Object]\", :e #inccup/ComponentValue nil}"
+                          #js {:id "ii", :class "cc [object Object]", :e "[object Object]"}
                           #inccup/ComponentValue #js ["div" #js {}] "4"]
                      #inccup/ComponentValue
-                     #js ["p" "{:id \"ii\", :class \"cc e\", :e \"e\"}" "e" "4"]]]))
+                     #js ["p"
+                          #js {:id "ii", :class "cc e", :e "e"}
+                          "e" "4"]]]))
       (update-comp (template2 (list nil) {:class "4" :f "f"}) comp)
       (is (inccup=
            @comp
@@ -137,8 +176,8 @@
                 #inccup/ComponentValue
                 #js ["p" #js {:class "4", :f "f"} nil]
                 #js [#inccup/ComponentValue
-                     #js ["p" "{:id \"ii\", :class \"cc \", :e nil}"
-                          nil "4"] nil nil]])))))
+                     #js ["p" #js {:id "ii", :class "cc ", :e ""}
+                          nil "4"]]])))))
 
 
 (comment

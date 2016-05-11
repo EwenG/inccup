@@ -40,10 +40,10 @@
                  :form expr
                  :type form-type}))))
 
-(defn compile-dynamic-expr [expr path]
+(defn compile-dynamic-expr [expr path form-type]
   (let [[expr used-vars] (track-vars expr)]
     (update-dynamic-forms `(cljs.core/constantly ~expr)
-                          path used-vars "child")
+                          path used-vars form-type)
     nil))
 
 (defn compile-attr-map
@@ -52,7 +52,7 @@
   [attrs path]
   (if (some util/unevaluated?
             (mapcat identity attrs))
-    (compile-dynamic-expr attrs path)
+    (compile-dynamic-expr attrs path "attrs")
     attrs))
 
 (defn maybe-attr-map
@@ -149,6 +149,10 @@
     ::literal-tag-and-no-attributes  ; e.g. [:span ^String x]
     (literal? tag)
     ::literal-tag                    ; e.g. [:span x]
+    (map? attrs)
+    ::attributes                     ; e.g. [x {}]
+    (not-implicit-map? attrs)
+    ::no-attributes                  ; e.g. [x ^String y]
     :else
     ::default))
 
@@ -178,13 +182,24 @@
     (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
     (into [tag (or tag-attrs {}) nil] (compile-seq rest-content path 3))))
 
+(defmethod compile-element ::attributes
+  [[tag attrs & rest-content] path]
+  (dynamic-tag tag (conj path 0))
+  (let [compiled-attrs (compile-attr-map attrs (conj path 1))]
+    (into [nil (or compiled-attrs {})] (compile-seq rest-content path 2))))
+
+(defmethod compile-element ::no-attributes
+  [[tag & content] path]
+  (compile-element (apply vector tag {} content) path))
+
 (defmethod compile-element ::default
   [[tag attrs & rest-content :as element] path]
   (dynamic-tag tag (conj path 0))
-  (maybe-attr-map attrs (conj path 1) (conj path 2) {})
   (if (= 1 (count element))
     [nil {}]
-    (into [nil {} nil] (compile-seq rest-content path 3))))
+    (do
+      (maybe-attr-map attrs (conj path 1) (conj path 2) {})
+      (into [nil {} nil] (compile-seq rest-content path 3)))))
 
 (declare compile-dispatch)
 
@@ -207,8 +222,8 @@
     (string? expr) expr
     (keyword? expr) expr
     (literal? expr) expr
-    (seq? expr) (compile-dynamic-expr expr path)
-    :else (compile-dynamic-expr expr path)))
+    (seq? expr) (compile-dynamic-expr expr path "child")
+    :else (compile-dynamic-expr expr path "child")))
 
 (defn var-deps->indexes [params var-deps]
   (map #(.indexOf params %) var-deps))
