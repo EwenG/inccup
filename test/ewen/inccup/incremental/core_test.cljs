@@ -173,7 +173,7 @@
                        #inccup/ComponentValue
                        #js ["p" #js {:id "ii", :class "cc 2", :e "2"}
                             "2" "4"]]]))
-        (pprint *effects*))
+        #_(pprint *effects*))
       (update-comp (template2 (list 1 #h [:div] "e") {:id 3}) comp)
       (is (inccup=
            @comp
@@ -208,10 +208,6 @@
 
 
 (comment
-  (defn def1 [x] #h [:div {} x])
-  @(create-comp (def1 #h [:div]))
-
-  (inccup= @(create-comp (def1 #h [:div]))
-           #js ["div" #js {} #inccup/ComponentValue #js ["div" #js {}]])
+  (defn def1 [x] #h ^{:key x} [:div#ii.cc {} x])
 
   )

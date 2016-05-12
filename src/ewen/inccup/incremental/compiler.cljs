@@ -106,30 +106,33 @@
                                remove-element create-element
                                will-update did-update
                                mount-comp unmount-comp)
-                  (let [new-comp (create-comp
-                                  form
-                                  update-tag update-attribute
-                                  remove-element create-element
-                                  will-update did-update
-                                  mount-comp unmount-comp)]
+                  (do
                     (walk-children-comps
                      prev-form unmount-comp "bottom-up")
                     (unmount-comp element index prev-form)
+                    (let [new-comp (create-comp
+                                    form
+                                    update-tag update-attribute
+                                    remove-element create-element
+                                    will-update did-update
+                                    mount-comp unmount-comp)]
+                      (aset element index new-comp)
+                      (mount-comp element index new-comp)
+                      (walk-children-comps
+                       new-comp mount-comp "top-bottom"))))
+                (inccup-seq? prev-form)
+                (do
+                  (pop-inccup-seq-from
+                   prev-form 0 remove-element unmount-comp)
+                  (let [new-comp (create-comp form
+                                              update-tag update-attribute
+                                              remove-element create-element
+                                              will-update did-update
+                                              mount-comp unmount-comp)]
                     (aset element index new-comp)
                     (mount-comp element index new-comp)
                     (walk-children-comps
                      new-comp mount-comp "top-bottom")))
-                (inccup-seq? prev-form)
-                (let [new-comp (create-comp form
-                                            update-tag update-attribute
-                                            remove-element create-element
-                                            will-update did-update
-                                            mount-comp unmount-comp)]
-                  (pop-inccup-seq-from
-                   prev-form 0 remove-element unmount-comp)
-                  (aset element index new-comp)
-                  (mount-comp element index new-comp)
-                  (walk-children-comps new-comp mount-comp "top-bottom"))
                 (nil? prev-form)
                 (let [new-comp (create-comp form
                                             update-tag update-attribute
@@ -140,16 +143,18 @@
                   (mount-comp element index new-comp)
                   (walk-children-comps new-comp mount-comp "top-bottom"))
                 :else
-                (let [new-comp (create-comp
-                                form
-                                update-tag update-attribute
-                                remove-element create-element
-                                will-update did-update
-                                mount-comp unmount-comp)]
+                (do
                   (remove-element element index)
-                  (aset element index new-comp)
-                  (mount-comp element index new-comp)
-                  (walk-children-comps new-comp mount-comp "top-bottom")))
+                  (let [new-comp (create-comp
+                                  form
+                                  update-tag update-attribute
+                                  remove-element create-element
+                                  will-update did-update
+                                  mount-comp unmount-comp)]
+                    (aset element index new-comp)
+                    (mount-comp element index new-comp)
+                    (walk-children-comps
+                     new-comp mount-comp "top-bottom"))))
           (seq? form)
           (cond (inccup-seq? prev-form)
                 (loop [form form
@@ -324,7 +329,7 @@
       true)))
 
 (deftype Component [static paths var-deps form-types forms
-                    params id ^:mutable value]
+                    params id key level ^:mutable value]
   IDeref
   (-deref [_] value)
   IComponent
