@@ -80,29 +80,47 @@
        (inccup= y (first more)))
      false)))
 
-(defn update-tag [element index old-tag new-tag]
-  nil)
+(def ^:dynamic *effects* nil)
 
-(defn update-attribute [element index k old-v new-v]
-  nil)
+(defn update-tag [parent index old-tag new-tag]
+  (when *effects*
+    (set!
+     *effects*
+     (conj *effects* [:update-tag parent index old-tag new-tag]))))
 
-(defn remove-element [element index]
-  nil)
+(defn update-attribute [parent index k old-v new-v]
+  (when *effects*
+    (set!
+     *effects*
+     (conj *effects* [:update-attribute parent index k old-v new-v]))))
 
-(defn create-element [element index]
-  )
+(defn remove-element [parent index]
+  (when *effects*
+    (set!
+     *effects*
+     (conj *effects* [:remove-element parent index]))))
+
+(defn create-element [parent index element]
+  (when *effects*
+    (set!
+     *effects*
+     (conj *effects* [:create-element parent index element]))))
 
 (defn will-update [comp]
-  nil)
+  (when *effects*
+    (set! *effects* (conj *effects* [:will-update comp]))))
 
 (defn did-update [comp]
-  nil)
+  (when *effects*
+    (set! *effects* (conj *effects* [:did-update comp]))))
 
-(defn mount-comp [comp]
-  nil)
+(defn mount-comp [parent index comp]
+  (when *effects*
+    (set! *effects* (conj *effects* [:mount-comp comp]))))
 
-(defn unmount-comp [comp]
-  nil)
+(defn unmount-comp [parent index comp]
+  (when *effects*
+    (set! *effects* (conj *effects* [:unmount-comp comp]))))
 
 (defn create-comp [c]
   (comp/create-comp
@@ -135,7 +153,7 @@
       (update-comp (def2 'div 5 "f") comp)
       @comp
       (is (inccup= @comp
-             #js ["div" #js {} "5" "f"])))))
+                   #js ["div" #js {} "5" "f"])))))
 
 (defn template1 [x] #h[:p#ii.cc {:e x :class x} x "4"])
 (defn template2 [x z] #h [:p {} (count x) #h [:p z]
@@ -144,15 +162,18 @@
 (deftest test2
   (testing "test2"
     (let [comp (template2 (list 1 2) nil)]
-      (is (inccup= @(create-comp comp))
-          #js ["p" #js {} "2"
-               #inccup/ComponentValue #js ["p" #js {} nil]
-               #js [#inccup/ComponentValue
-                    #js ["p" "{:id \"ii\", :class \"cc 1\", :e 1}"
-                         "1" "4"]
-                    #inccup/ComponentValue
-                    #js ["p" "{:id \"ii\", :class \"cc 2\", :e 2}"
-                         "2" "4"]]])
+      (binding [*effects* []]
+        (is (inccup=
+             @(create-comp comp)
+             #js ["p" #js {} "2"
+                  #inccup/ComponentValue #js ["p" #js {} nil]
+                  #js [#inccup/ComponentValue
+                       #js ["p" #js {:id "ii", :class "cc 1", :e "1"}
+                            "1" "4"]
+                       #inccup/ComponentValue
+                       #js ["p" #js {:id "ii", :class "cc 2", :e "2"}
+                            "2" "4"]]]))
+        (pprint *effects*))
       (update-comp (template2 (list 1 #h [:div] "e") {:id 3}) comp)
       (is (inccup=
            @comp
@@ -182,6 +203,7 @@
 
 (comment
   (run-tests 'ewen.inccup.incremental.core-test)
+
   )
 
 
@@ -192,4 +214,4 @@
   (inccup= @(create-comp (def1 #h [:div]))
            #js ["div" #js {} #inccup/ComponentValue #js ["div" #js {}]])
 
-        )
+  )

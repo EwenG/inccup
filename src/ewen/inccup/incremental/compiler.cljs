@@ -55,6 +55,43 @@
                      mount-comp unmount-comp)
       (recur inccup-seq (rest form) (inc index)))))
 
+(declare walk-children-comps)
+
+(defn walk-seq-comps [inccup-seq comp-fn direction]
+  (loop [inccup-seq inccup-seq
+         seq-index 0]
+    (let [element (aget inccup-seq seq-index)]
+      (cond (instance? Component element)
+            (if (= "top-bottom" direction)
+              (do (comp-fn inccup-seq seq-index element)
+                  (walk-children-comps element comp-fn direction))
+              (do (walk-children-comps element comp-fn direction)
+                  (comp-fn inccup-seq seq-index element)))
+            (inccup-seq? element)
+            (walk-seq-comps element comp-fn direction)
+            :else
+            (recur inccup-seq (inc seq-index))))))
+
+(defn walk-children-comps [comp comp-fn direction]
+  (loop [value (.-value comp)
+         paths (.-paths comp)
+         index 0]
+    (when-let [path (aget paths index)]
+      (let [dec-path-length (dec (count path))
+            leaf (aget-in value path dec-path-length 0)]
+        (let [index-in-parent (aget path dec-path-length)
+              element (aget leaf index-in-parent)]
+          (cond (instance? Component element)
+                (if (= "top-bottom" direction)
+                  (do (comp-fn leaf index-in-parent element)
+                      (walk-children-comps element comp-fn direction))
+                  (do (walk-children-comps element comp-fn direction)
+                      (comp-fn leaf index-in-parent element)))
+                (inccup-seq? element)
+                (walk-seq-comps element comp-fn direction)
+                :else nil))
+        (recur value paths (inc index))))))
+
 (defn diff-children [element index form current-comp
                      update-tag update-attribute
                      remove-element create-element
@@ -75,9 +112,13 @@
                                   remove-element create-element
                                   will-update did-update
                                   mount-comp unmount-comp)]
-                    (unmount-comp element index (aget element index))
+                    (walk-children-comps
+                     prev-form unmount-comp "bottom-up")
+                    (unmount-comp element index prev-form)
                     (aset element index new-comp)
-                    (mount-comp element index new-comp)))
+                    (mount-comp element index new-comp)
+                    (walk-children-comps
+                     new-comp mount-comp "top-bottom")))
                 (inccup-seq? prev-form)
                 (let [new-comp (create-comp form
                                             update-tag update-attribute
@@ -87,7 +128,8 @@
                   (pop-inccup-seq-from
                    prev-form 0 remove-element unmount-comp)
                   (aset element index new-comp)
-                  (mount-comp element index new-comp))
+                  (mount-comp element index new-comp)
+                  (walk-children-comps new-comp mount-comp "top-bottom"))
                 (nil? prev-form)
                 (let [new-comp (create-comp form
                                             update-tag update-attribute
@@ -95,7 +137,8 @@
                                             will-update did-update
                                             mount-comp unmount-comp)]
                   (aset element index new-comp)
-                  (mount-comp element index new-comp))
+                  (mount-comp element index new-comp)
+                  (walk-children-comps new-comp mount-comp "top-bottom"))
                 :else
                 (let [new-comp (create-comp
                                 form
@@ -105,7 +148,8 @@
                                 mount-comp unmount-comp)]
                   (remove-element element index)
                   (aset element index new-comp)
-                  (mount-comp element index new-comp)))
+                  (mount-comp element index new-comp)
+                  (walk-children-comps new-comp mount-comp "top-bottom")))
           (seq? form)
           (cond (inccup-seq? prev-form)
                 (loop [form form
@@ -128,6 +172,7 @@
                                    mount-comp unmount-comp)
                 (instance? Component prev-form)
                 (do
+                  (walk-children-comps prev-form unmount-comp "bottom-up")
                   (unmount-comp element index prev-form)
                   (create-inccup-seq element index form current-comp
                                      update-tag update-attribute
@@ -147,6 +192,7 @@
                 nil
                 (instance? Component prev-form)
                 (do
+                  (walk-children-comps prev-form unmount-comp "bottom-up")
                   (unmount-comp element index prev-form)
                   (aset element index nil))
                 (inccup-seq? prev-form)
@@ -165,6 +211,7 @@
                   (create-element element index (str form)))
                 (instance? Component prev-form)
                 (do
+                  (walk-children-comps prev-form unmount-comp "bottom-up")
                   (unmount-comp element index prev-form)
                   (aset element index (str form))
                   (create-element element index (str form)))
@@ -200,7 +247,7 @@
             (recur (rest attrs-keys)))))
       (goog.object/forEach
        old-attrs (fn [v k _]
-                   (when-not (aget new-attrs-keys k)
+                   (when-not (goog.object/containsKey new-attrs-keys k)
                      (goog.object/remove old-attrs k)
                      (update-attribute element index k v nil)))))))
 
@@ -229,6 +276,17 @@
                            will-update did-update
                            mount-comp unmount-comp)
     (throw (js/Error. (str "Invalid form-type: " form-type)))))
+
+(defn create-static [parent index static create-element]
+  (when static
+    (create-element parent index static)
+    (let [maybe-attrs (aget static 1)]
+      (loop [index (if (and (not (array? maybe-attrs))
+                            (not (nil? maybe-attrs))
+                            (not (string? maybe-attrs)))
+                     2 1)]
+        (when-let [next-child (aget static index)]
+          (create-static static index next-child create-element))))))
 
 #_(defn clone-with-path [static path index]
   (if (< index (count path))
@@ -275,23 +333,25 @@
                 remove-element create-element
                 will-update did-update
                 mount-comp unmount-comp]
-    (loop [static (static)
-           paths paths
-           index 0]
-      (if-let [path (aget paths index)]
-        (let [dec-path-length (dec (count path))
-              leaf (aget-in static path dec-path-length 0)]
-          (update-form-dispatch leaf
-                                (aget path dec-path-length)
-                                (aget forms index)
-                                (aget form-types index)
-                                c
-                                update-tag update-attribute
-                                remove-element create-element
-                                will-update did-update
-                                mount-comp unmount-comp)
-          (recur static paths (inc index)))
-        (set! value static)))
+    (let [static (static)]
+      (create-static c 0 static create-element)
+      (loop [static static
+             paths paths
+             index 0]
+        (if-let [path (aget paths index)]
+          (let [dec-path-length (dec (count path))
+                leaf (aget-in static path dec-path-length 0)]
+            (update-form-dispatch leaf
+                                  (aget path dec-path-length)
+                                  (aget forms index)
+                                  (aget form-types index)
+                                  c
+                                  update-tag update-attribute
+                                  remove-element create-element
+                                  will-update did-update
+                                  mount-comp unmount-comp)
+            (recur static paths (inc index)))
+          (set! value static))))
     c)
   (update-comp [c prev-comp
                 update-tag update-attribute
