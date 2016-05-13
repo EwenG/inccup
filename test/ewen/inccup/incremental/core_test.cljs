@@ -116,15 +116,15 @@
 
 (defn mount-comp [parent index comp]
   (when *effects*
-    (set! *effects* (conj *effects* [:mount-comp comp]))))
+    (set! *effects* (conj *effects* [:mount-comp parent index comp]))))
 
 (defn unmount-comp [parent index comp]
   (when *effects*
-    (set! *effects* (conj *effects* [:unmount-comp comp]))))
+    (set! *effects* (conj *effects* [:unmount-comp parent index comp]))))
 
 (defn create-comp [c]
   (comp/create-comp
-   c
+   c nil nil
    update-tag update-attribute remove-element create-element
    will-update did-update mount-comp unmount-comp))
 
@@ -173,6 +173,7 @@
                        #inccup/ComponentValue
                        #js ["p" #js {:id "ii", :class "cc 2", :e "2"}
                             "2" "4"]]]))
+        #_(pprint (filter #(= (first %) :mount-comp) *effects*))
         #_(pprint *effects*))
       (update-comp (template2 (list 1 #h [:div] "e") {:id 3}) comp)
       (is (inccup=
