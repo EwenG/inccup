@@ -208,10 +208,10 @@
   ([content path]
    (compile-seq content path 0))
   ([content path index-init]
-   (loop [[expr & rest-content] content
+   (loop [[expr & rest-content :as content] content
           index index-init
           compiled []]
-     (if expr
+     (if (not (empty? content))
        (let [compiled-expr (compile-dispatch expr (conj path index))]
          (recur rest-content (inc index) (conj compiled compiled-expr)))
        compiled))))
