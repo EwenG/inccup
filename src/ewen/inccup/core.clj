@@ -22,14 +22,16 @@
             "Invalid output format")
     [{:mode mode :output-format output-format} (first content)]))
 
-(defmacro with-key [{:keys [key level]} comp]
-  {:pre [(and (number? level) (> level 0))]}
-  (cond (nil? key)
-        ~comp
-        (nil? level)
-        `(ewen.inccup.incremental.compiler/set-key ~comp ~key 1)
-        :else
-        `(ewen.inccup.incremental.compiler/set-key ~comp ~key ~level)))
+(defmacro with-key [key-level comp]
+  (if (map? key-level)
+    (let [{:keys [key level] :or {level 1}} key-level]
+      (assert (and (number? level) (> level 0)))
+      (if (nil? key)
+            ~comp
+            `(ewen.inccup.incremental.compiler/set-key ~comp ~key ~level)))
+    (if (nil? key-level)
+      ~comp
+      `(ewen.inccup.incremental.compiler/set-key ~comp ~key 1))))
 
 #_(defmacro html
   [& options-content]
