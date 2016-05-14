@@ -241,8 +241,6 @@
                                         :symbol param-name})
                                 (rest params))
                          tracked-vars))
-        {:keys [key level] :or {level 1}} (meta forms)
-        _ (assert (and (number? level) (> level 0)))
         [static dynamic]
         (binding [*env* &env
                   *dynamic-forms* []
@@ -261,7 +259,7 @@
       (cljs.core/array ~@(map :type dynamic))
       (cljs.core/array ~@(map :form dynamic))
       (cljs.core/array ~@(keys tracked-vars))
-      ~(swap! component-id inc) ~key ~level nil)))
+      ~(swap! component-id inc) nil 1 nil)))
 
 (alter-var-root #'*cljs-data-readers* assoc 'h
                 (fn [forms]
