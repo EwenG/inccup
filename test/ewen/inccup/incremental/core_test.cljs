@@ -106,6 +106,13 @@
      *effects*
      (conj *effects* [:create-element parent index element]))))
 
+(defn move-element [prev-parent prev-index prev-element
+                    new-parent new-index new-element]
+  (when *effects*
+    (set!
+     *effects*
+     (conj *effects* [:move-element new-parent new-index new-element]))))
+
 (defn will-update [comp]
   (when *effects*
     (set! *effects* (conj *effects* [:will-update comp]))))
@@ -125,13 +132,13 @@
 (defn create-comp [c]
   (comp/create-comp
    c nil nil
-   update-tag update-attribute remove-element create-element
+   update-tag update-attribute remove-element create-element move-element
    will-update did-update mount-comp unmount-comp))
 
 (defn update-comp [c prev-c]
   (comp/update-comp
    c prev-c
-   update-tag update-attribute remove-element create-element
+   update-tag update-attribute remove-element create-element move-element
    will-update did-update mount-comp unmount-comp))
 
 (defn def1 [x] #h [:div#ii.cc {} x])
@@ -201,13 +208,14 @@
                      #js ["p" #js {:id "ii", :class "cc ", :e ""}
                           nil "4"]]])))))
 
-#_(defn template3 [x] #h[:p {:class x} nil x])
-#_(defn template4 [x] #h [:p {} (for [y x] ^{:key y} (template3 (inc y)))])
+(defn template3 [x] #h [:p {:class x} nil x])
+(defn template4 [x] #h [:p {} (for [y x]
+                                (with-key y (template3 (inc y))))])
 
 #_(deftest keyedChildren
-  (testing "keyed children"
-    (let [comp (template4 (list 1 2))]
-      @(create-comp comp))))
+    (testing "keyed children"
+      (let [comp (template4 (list 1 2))]
+        @(create-comp comp))))
 
 
 (comment
