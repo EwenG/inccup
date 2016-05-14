@@ -34,6 +34,8 @@
 (defn inccup-seq? [x]
   (and (array? x) (aget x "inccup/seq")))
 
+(declare walk-children-comps)
+
 (defn pop-inccup-seq-from [x index remove-element unmount-comp]
   (loop [index index
          l (count x)]
@@ -76,22 +78,22 @@
                      mount-comp unmount-comp)
       (recur inccup-seq (rest form) (inc index)))))
 
-(declare walk-children-comps)
-
 (defn walk-seq-comps [inccup-seq comp-fn direction]
   (loop [inccup-seq inccup-seq
+         l (count inccup-seq)
          seq-index 0]
-    (let [element (aget inccup-seq seq-index)]
-      (cond (instance? Component element)
-            (if (= "top-bottom" direction)
-              (do (comp-fn inccup-seq seq-index element)
-                  (walk-children-comps element comp-fn direction))
-              (do (walk-children-comps element comp-fn direction)
-                  (comp-fn inccup-seq seq-index element)))
-            (inccup-seq? element)
-            (walk-seq-comps element comp-fn direction)
-            :else
-            (recur inccup-seq (inc seq-index))))))
+    (when (< seq-index l)
+      (let [element (aget inccup-seq seq-index)]
+        (cond (instance? Component element)
+              (if (= "top-bottom" direction)
+                (do (comp-fn inccup-seq seq-index element)
+                    (walk-children-comps element comp-fn direction))
+                (do (walk-children-comps element comp-fn direction)
+                    (comp-fn inccup-seq seq-index element)))
+              (inccup-seq? element)
+              (walk-seq-comps element comp-fn direction)
+              :else
+              (recur inccup-seq l (inc seq-index)))))))
 
 (defn walk-children-comps [comp comp-fn direction]
   (loop [value (.-value comp)
