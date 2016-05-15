@@ -17,37 +17,106 @@
     arr))
 
 (defprotocol IComponent
-  (create-comp [c parent index
+  (create-comp [c parent index parent-comps
                 update-tag update-attribute
-                remove-element create-element move-element
+                remove-element create-element move-comp
                 will-update did-update
                 mount-comp unmount-comp])
-  (update-comp [c prev-c
+  (update-comp [c prev-c parent-comps
                 update-tag update-attribute
-                remove-element create-element move-element
+                remove-element create-element move-comp
                 will-update did-update
                 mount-comp unmount-comp])
   (set-key [c key level]))
 
 (declare Component)
 
+(declare walk-children-comps)
+
+(defn init-keymap [comp max-level]
+  (loop [keymap (aset comp "inccup/keymap" (js-obj))
+         removed-keys (aset comp "inccup/removed-keys" (js-obj))
+         i 1]
+    (when (<= i max-level)
+      (aset keymap i (js-obj))
+      (aset removed-keys i (js-obj))
+      (recur keymap removed-keys (inc i)))))
+
+(defn update-parent-comps [parent-comps comp max-level]
+  (if (nil? (aget parent-comps 0))
+    (do
+      (aset parent-comps 0 (doto (make-array max-level) (aset 0 comp)))
+      (aset parent-comps 1 0))
+    (let [parents (aget parent-comps 0)
+          new-index (inc (aget parent-comps 1))
+          new-index (if (>= new-index (count parents)) 0 new-index)]
+      (aset parents new-index comp)
+      (aset parents parent-comps new-index))))
+
+(defn parent-comp [parent-comps level]
+  (let [parents (aget parent-comps 0)
+        index (aget parent-comps 1)
+        index (- index (dec level))
+        index (if (< index 0) (+ index (count parents)) index)]
+    (aget parents index)))
+
+(defn register-comp-key [parent-comps comp]
+  (let [parents (aget parent-comps 0)
+        index (aget parent-comps 1)
+        keymap (-> (aget parents index)
+                   (aget "inccup/keymap")
+                   (aget (.-level comp)))]
+    (aset keymap (.-key comp) comp)))
+
+(defn remove-comp-key [parent-comps comp]
+  (let [parents (aget parent-comps 0)
+        index (aget parent-comps 1)
+        removed-keys (-> (aget parents index)
+                         (aget "inccup/removed-keys")
+                         (aget (.-level comp)))]
+    (aset removed-keys (.-key comp) nil)))
+
+(defn update-key-on-move [parent-comps comp]
+  (let [parents (aget parent-comps 0)
+        index (aget parent-comps 1)
+        removed-keys (-> (aget parents index)
+                         (aget "inccup/removed-keys")
+                         (aget (.-level comp)))]
+    (goog.object/remove removed-keys (.-key comp))))
+
+(defn clean-comp-keys [comp max-level]
+  (let [keymap (aget comp "inccup/keymap")
+        removed-keys (aget comp "inccup/removed-keys")]
+    (loop [max-level max-level
+           i 1]
+      (when (<= i max-level)
+        (let [keymap (aget keymap i)
+              removed-keys (aget removed-keys i)]
+          (goog.object/forEach
+           removed-keys (fn [_ k _]
+                          (goog.object/remove removed-keys k)
+                          (goog.object/remove keymap k))))
+        (recur max-level (inc i))))))
+
 (defn inccup-seq? [x]
   (and (array? x) (aget x "inccup/seq")))
 
-(declare walk-children-comps)
-
-(defn pop-inccup-seq-from [x index remove-element unmount-comp]
+(defn pop-inccup-seq-from
+  [x index parent-comps remove-element unmount-comp]
   (loop [index index
          l (count x)]
     (when (< index l)
       (let [prev-form (aget x index)]
         (cond (instance? Component prev-form)
               (do
+                (when (.-key prev-form)
+                    (remove-comp-key parent-comps prev-form))
                 (walk-children-comps
                  prev-form unmount-comp "bottom-up")
                 (unmount-comp x index prev-form))
               (inccup-seq? prev-form)
-              (pop-inccup-seq-from prev-form 0 remove-element unmount-comp)
+              (pop-inccup-seq-from prev-form 0 parent-comps
+                                   remove-element unmount-comp)
               (nil? prev-form)
               nil
               :else
@@ -57,9 +126,9 @@
 
 (declare diff-children)
 
-(defn create-inccup-seq [element index form current-comp
+(defn create-inccup-seq [element index form parent-comps
                          update-tag update-attribute
-                         remove-element create-element move-element
+                         remove-element create-element move-comp
                          will-update did-update
                          mount-comp unmount-comp]
   (aset element index
@@ -71,9 +140,9 @@
          form form
          index 0]
     (when-let [f (first form)]
-      (diff-children inccup-seq index f current-comp
+      (diff-children inccup-seq index f parent-comps
                      update-tag update-attribute
-                     remove-element create-element move-element
+                     remove-element create-element move-comp
                      will-update did-update
                      mount-comp unmount-comp)
       (recur inccup-seq (rest form) (inc index)))))
@@ -115,144 +184,131 @@
                 :else nil))
         (recur value paths (inc index))))))
 
-(defn diff-children [element index form current-comp
-                     update-tag update-attribute
-                     remove-element create-element move-element
-                     will-update did-update
-                     mount-comp unmount-comp]
-  (let [prev-form (aget element index)]
-    (cond (instance? Component form)
-          (if (.-key form)
-            (prn form)
-            (cond (instance? Component prev-form)
-                  (if (= (.-id prev-form) (.-id form))
-                    (update-comp form prev-form
+(defn delete-prev-form
+  [element index prev-form parent-comps remove-element unmount-comp]
+  (cond (instance? Component prev-form)
+        (do
+          (when (.-key prev-form)
+            (remove-comp-key parent-comps prev-form))
+          (walk-children-comps
+           prev-form unmount-comp "bottom-up")
+          (unmount-comp element index prev-form))
+        (inccup-seq? prev-form)
+        (pop-inccup-seq-from
+         prev-form 0 parent-comps remove-element unmount-comp)
+        (nil? prev-form)
+        nil
+        :else
+        (remove-element element index)))
+
+  (defn diff-children [element index form parent-comps
+                       update-tag update-attribute
+                       remove-element create-element move-comp
+                       will-update did-update
+                       mount-comp unmount-comp]
+    (let [prev-form (aget element index)]
+      (cond (instance? Component form)
+            (if-let [key (.-key form)]
+              (let [level (.-level form)]
+                (if (and (instance? Component prev-form)
+                         (= (.-key prev-form) key)
+                         (= (.-level prev-form) level))
+                  (do
+                    (assert (= (.-id prev-form) (.-id form)))
+                    (update-comp form prev-form parent-comps
                                  update-tag update-attribute
                                  remove-element create-element
-                                 move-element
+                                 move-comp
                                  will-update did-update
-                                 mount-comp unmount-comp)
+                                 mount-comp unmount-comp))
+                  (if-let [moved-comp (->
+                                       (parent-comp parent-comps level)
+                                       (aget "inccup/keymap")
+                                       (aget level)
+                                       (aget key))]
                     (do
-                      (walk-children-comps
-                       prev-form unmount-comp "bottom-up")
-                      (unmount-comp element index prev-form)
-                      (->> (create-comp
-                            form element index
-                            update-tag update-attribute
-                            remove-element create-element move-element
-                            will-update did-update
-                            mount-comp unmount-comp)
-                           (aset element index))))
-                  (inccup-seq? prev-form)
-                  (do
-                    (pop-inccup-seq-from
-                     prev-form 0 remove-element unmount-comp)
-                    (->> (create-comp form element index
-                                      update-tag update-attribute
-                                      remove-element create-element
-                                      move-element
-                                      will-update did-update
-                                      mount-comp unmount-comp)
-                         (aset element index)))
-                  (nil? prev-form)
-                  (->> (create-comp form element index
-                                    update-tag update-attribute
-                                    remove-element create-element
-                                    move-element
-                                    will-update did-update
-                                    mount-comp unmount-comp)
-                       (aset element index))
-                  :else
-                  (do
-                    (remove-element element index)
-                    (->> (create-comp
-                          form element index
-                          update-tag update-attribute
-                          remove-element create-element
-                          move-element
-                          will-update did-update
-                          mount-comp unmount-comp)
-                         (aset element index)))))
-          (seq? form)
-          (cond (inccup-seq? prev-form)
-                (loop [form form
-                       index 0]
-                  (if-let [f (first form)]
-                    (do (diff-children prev-form index f current-comp
-                                       update-tag update-attribute
-                                       remove-element create-element
-                                       move-element
-                                       will-update did-update
-                                       mount-comp unmount-comp)
-                        (recur (rest form) (inc index)))
-                    (when (< index (count prev-form))
-                      (pop-inccup-seq-from
-                       prev-form index remove-element unmount-comp))))
-                (nil? prev-form)
-                (create-inccup-seq element index form current-comp
+                      (assert (= (.-id prev-form) (.-id form)))
+                      (update-key-on-move parent-comps moved-comp)
+                      (move-comp element index moved-comp)
+                      (update-comp form moved-comp parent-comps
                                    update-tag update-attribute
                                    remove-element create-element
-                                   move-element
+                                   move-comp
                                    will-update did-update
                                    mount-comp unmount-comp)
-                (instance? Component prev-form)
+                      (delete-prev-form element index prev-form
+                                        parent-comps
+                                        remove-element unmount-comp)
+                      (aset element index moved-comp))
+                    (do
+                      (delete-prev-form element index prev-form
+                                        parent-comps
+                                        remove-element unmount-comp)
+                      (->> (create-comp
+                            form element index parent-comps
+                            update-tag update-attribute
+                            remove-element create-element move-comp
+                            will-update did-update
+                            mount-comp unmount-comp)
+                           (aset element index))))))
+              (if (and (instance? Component prev-form)
+                       (= (.-id prev-form) (.-id form)))
+                (update-comp form prev-form parent-comps
+                             update-tag update-attribute
+                             remove-element create-element
+                             move-comp
+                             will-update did-update
+                             mount-comp unmount-comp)
                 (do
-                  (walk-children-comps prev-form unmount-comp "bottom-up")
-                  (unmount-comp element index prev-form)
-                  (create-inccup-seq element index form current-comp
-                                     update-tag update-attribute
-                                     remove-element create-element
-                                     move-element
-                                     will-update did-update
-                                     mount-comp unmount-comp))
-                :else
-                (do
-                  (remove-element element index)
-                  (create-inccup-seq element index form current-comp
-                                     update-tag update-attribute
-                                     remove-element create-element
-                                     move-element
-                                     will-update did-update
-                                     mount-comp unmount-comp)))
-          (nil? form)
-          (cond (nil? prev-form)
-                nil
-                (instance? Component prev-form)
-                (do
-                  (walk-children-comps prev-form unmount-comp "bottom-up")
-                  (unmount-comp element index prev-form)
-                  (aset element index nil))
-                (inccup-seq? prev-form)
-                (do
-                  (pop-inccup-seq-from
-                   prev-form 0 remove-element unmount-comp)
-                  (aset element index nil))
-                :else
-                (do
-                  (remove-element element index)
-                  (aset element index nil)))
-          :else
-          (cond (nil? prev-form)
-                (do
-                  (create-element element index (str form))
-                  (aset element index (str form)))
-                (instance? Component prev-form)
-                (do
-                  (walk-children-comps prev-form unmount-comp "bottom-up")
-                  (unmount-comp element index prev-form)
-                  (create-element element index (str form))
-                  (aset element index (str form)))
-                (inccup-seq? prev-form)
-                (do
-                  (pop-inccup-seq-from
-                   prev-form 0 remove-element unmount-comp)
-                  (create-element element index (str form))
-                  (aset element index (str form)))
-                :else
-                (do
-                  (remove-element element index)
-                  (create-element element index (str form))
-                  (aset element index (str form)))))))
+                  (delete-prev-form element index prev-form
+                                    parent-comps
+                                    remove-element unmount-comp)
+                  (->> (create-comp
+                        form element index parent-comps
+                        update-tag update-attribute
+                        remove-element create-element move-comp
+                        will-update did-update
+                        mount-comp unmount-comp)
+                       (aset element index)))))
+            (seq? form)
+            (if (inccup-seq? prev-form)
+                  (loop [form form
+                         index 0]
+                    (if-let [f (first form)]
+                      (do (diff-children prev-form index f parent-comps
+                                         update-tag update-attribute
+                                         remove-element create-element
+                                         move-comp
+                                         will-update did-update
+                                         mount-comp unmount-comp)
+                          (recur (rest form) (inc index)))
+                      (when (< index (count prev-form))
+                        (pop-inccup-seq-from
+                         prev-form index parent-comps
+                         remove-element unmount-comp))))
+                  (do
+                    (delete-prev-form element index prev-form
+                                      parent-comps
+                                      remove-element unmount-comp)
+                    (create-inccup-seq element index form parent-comps
+                                       update-tag update-attribute
+                                       remove-element create-element
+                                       move-comp
+                                       will-update did-update
+                                       mount-comp unmount-comp)))
+            (nil? form)
+            (do
+              (delete-prev-form element index prev-form parent-comps
+                                remove-element unmount-comp)
+              (aset element index nil))
+            :else
+            (if (and (string? prev-form) (= prev-form form))
+              nil
+              (do
+                (delete-prev-form element index prev-form parent-comps
+                                  remove-element unmount-comp)
+                (create-element element index (str form))
+                (aset element index (str form)))))))
 
 (defn attrs->js [attrs]
   (apply js-obj (interleave (map name (keys attrs))
@@ -279,10 +335,10 @@
                      (update-attribute element index k v nil)))))))
 
 (defn update-form-dispatch [element index form form-type
-                            current-comp
+                            parent-comps
                             update-tag update-attribute
                             remove-element create-element
-                            move-element
+                            move-comp
                             will-update did-update
                             mount-comp unmount-comp]
   (case form-type
@@ -292,17 +348,17 @@
               (aset element index new-tag)
               (update-tag element old-tag new-tag)))
     "maybe-attrs" (diff-attrs element index (form) update-attribute)
-    "or-attrs-child" (diff-children element index (form) current-comp
+    "or-attrs-child" (diff-children element index (form) parent-comps
                                     update-tag update-attribute
                                     remove-element create-element
-                                    move-element
+                                    move-comp
                                     will-update did-update
                                     mount-comp unmount-comp)
     "attrs" (diff-attrs element index (form) update-attribute)
-    "child" (diff-children element index (form) current-comp
+    "child" (diff-children element index (form) parent-comps
                            update-tag update-attribute
                            remove-element create-element
-                           move-element
+                           move-comp
                            will-update did-update
                            mount-comp unmount-comp)
     (throw (js/Error. (str "Invalid form-type: " form-type)))))
@@ -336,7 +392,7 @@
     (when-let [path (aget paths index)]
       (clone-with-path static path 0)
       (recur paths (inc index))))
-  static)
+    static)
 
 (defn identical-params? [deps-indexes prev-params params]
   (loop [deps-indexes deps-indexes
@@ -349,16 +405,18 @@
       true)))
 
 (deftype Component [static paths var-deps form-types forms params id
-                    ^:mutable key ^:mutable level
+                    ^:mutable key ^:mutable level max-level
                     ^:mutable value]
   IDeref
   (-deref [_] value)
   IComponent
-  (create-comp [c parent index
+  (create-comp [c parent index parent-comps
                 update-tag update-attribute
-                remove-element create-element move-element
+                remove-element create-element move-comp
                 will-update did-update
                 mount-comp unmount-comp]
+    (init-keymap c max-level)
+    (update-parent-comps parent-comps c max-level)
     (let [static (static)]
       (create-static nil nil static create-element)
       (loop [static static
@@ -371,23 +429,26 @@
                                   (aget path dec-path-length)
                                   (aget forms index)
                                   (aget form-types index)
-                                  c
+                                  parent-comps
                                   update-tag update-attribute
                                   remove-element create-element
-                                  move-element
+                                  move-comp
                                   will-update did-update
                                   mount-comp unmount-comp)
             (recur static paths (inc index)))
-          (set! value static)))
-      (mount-comp parent index c)
-      (walk-children-comps c mount-comp "top-bottom"))
+          (set! value static))))
+    (when key
+        (register-comp-key parent-comps c))
+    (mount-comp parent index c)
+    (walk-children-comps c mount-comp "top-bottom")
     c)
-  (update-comp [c prev-comp
+  (update-comp [c prev-comp parent-comps
                 update-tag update-attribute
-                remove-element create-element move-element
+                remove-element create-element move-comp
                 will-update did-update
                 mount-comp unmount-comp]
     (will-update c)
+    (update-parent-comps (or parent-comps #js []) prev-comp max-level)
     (loop [tree @prev-comp
            paths paths
            index 0]
@@ -401,13 +462,14 @@
                                   (aget path dec-path-length)
                                   (aget forms index)
                                   (aget form-types index)
-                                  c
+                                  parent-comps
                                   update-tag update-attribute
                                   remove-element create-element
-                                  move-element
+                                  move-comp
                                   will-update did-update
                                   mount-comp unmount-comp)))
         (recur tree paths (inc index))))
+    (clean-comp-keys prev-comp max-level)
     (did-update c)
     prev-comp)
   (set-key [c k l]

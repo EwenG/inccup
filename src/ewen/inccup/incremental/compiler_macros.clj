@@ -259,7 +259,7 @@
       (cljs.core/array ~@(map :type dynamic))
       (cljs.core/array ~@(map :form dynamic))
       (cljs.core/array ~@(keys tracked-vars))
-      ~(swap! component-id inc) nil 1 nil)))
+      ~(swap! component-id inc) nil 1 1 nil)))
 
 (alter-var-root #'*cljs-data-readers* assoc 'h
                 (fn [forms]
