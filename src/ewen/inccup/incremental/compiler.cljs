@@ -418,7 +418,7 @@
     (init-keymap c max-level)
     (update-parent-comps parent-comps c max-level)
     (let [static (static)]
-      (create-static nil nil static create-element)
+      (create-static parent index static create-element)
       (loop [static static
              paths paths
              index 0]
