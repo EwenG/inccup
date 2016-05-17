@@ -42,7 +42,7 @@
 
 (defn compile-dynamic-expr [expr path form-type]
   (let [[expr used-vars] (track-vars expr)]
-    (update-dynamic-forms `(cljs.core/constantly ~expr)
+    (update-dynamic-forms `(fn [] ~expr)
                           path used-vars form-type)
     nil))
 
@@ -80,7 +80,7 @@
 (defn dynamic-tag [tag path]
   {:pred [(not (literal? tag))]}
   (let [[expr used-vars] (track-vars tag)]
-    (update-dynamic-forms `(cljs.core/constantly ~expr)
+    (update-dynamic-forms `(fn [] ~expr)
                           path used-vars "tag")
     nil))
 
@@ -111,6 +111,11 @@
       (not (util/unevaluated? x))
       (not-hint? x java.util.Map)))
 
+(defn coll->js-array [coll]
+  (if (coll? coll)
+    `(cljs.core/array ~@(map coll->js-array coll))
+    coll))
+
 (defn literal->js [x]
   (cond
     (nil? x) nil
@@ -120,13 +125,25 @@
     (symbol? x) (str x)
     (vector? x) (if (nil? (first x))
                   (let [[tag attrs & content] x]
-                    `(cljs.core/array ~tag
-                                      ~(literal->js attrs)
-                                      ~@(map literal->js content)))
+                    (if-let [{:keys [update-path dynamic]} (meta x)]
+                      `(ewen.inccup.incremental.compiler/array-with-meta
+                        ~(coll->js-array update-path) ~dynamic
+                        (cljs.core/array ~tag
+                                         ~(literal->js attrs)
+                                         ~@(map literal->js content)))
+                      `(cljs.core/array ~tag
+                                        ~(literal->js attrs)
+                                        ~@(map literal->js content))))
                   (let [[tag attrs content] (util/normalize-element x)]
-                    `(cljs.core/array ~tag
-                                      ~(literal->js attrs)
-                                      ~@(map literal->js content))))
+                    (if-let [{:keys [update-path dynamic]} (meta x)]
+                      `(ewen.inccup.incremental.compiler/array-with-meta
+                        ~(coll->js-array update-path) ~dynamic
+                        (cljs.core/array ~tag
+                                         ~(literal->js attrs)
+                                         ~@(map literal->js content)))
+                      `(cljs.core/array ~tag
+                                        ~(literal->js attrs)
+                                        ~@(map literal->js content)))))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
                              (map literal->js (vals x))))
@@ -228,6 +245,36 @@
 (defn var-deps->indexes [params var-deps]
   (map #(.indexOf params %) var-deps))
 
+(defn static-with-update-path [static dynamic]
+  (let [update-meta-fn
+        (fn [var-deps index m]
+          (-> m
+              (update-in [:update-path]
+                         (fn [update-path]
+                           (if (= index (peek update-path))
+                             update-path
+                             (conj (or update-path []) index))))
+              (update-in [:dynamic]
+                         (fn [d]
+                           (or d (> (count var-deps) 0))))))]
+    (loop [static static
+           dynamic dynamic]
+      (if-let [{:keys [path var-deps]} (first dynamic)]
+        (->
+         (loop [static static
+                rest-path path
+                update-path []]
+           (if-let [index (first rest-path)]
+             (-> (if (= [] update-path)
+                   (vary-meta static
+                              (partial update-meta-fn var-deps index))
+                   (update-in static update-path vary-meta
+                              (partial update-meta-fn var-deps index)))
+                 (recur (rest rest-path) (conj update-path index)))
+             static))
+         (recur (rest dynamic)))
+        static))))
+
 (defmacro component [forms]
   (let [params (->> (:locals &env)
                     (filter (comp not :local second))
@@ -246,19 +293,15 @@
                   *dynamic-forms* []
                   *tracked-vars* tracked-vars]
           [(compile-dispatch forms []) *dynamic-forms*])
+        static (static-with-update-path static dynamic)
         static (literal->js static)
-        var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
-        coll->cljs-array (fn [coll] `(cljs.core/array ~@coll))]
+        var-deps->indexes (partial var-deps->indexes (keys tracked-vars))]
     `(ewen.inccup.incremental.compiler/Component.
-      (cljs.core/constantly ~static)
-      (cljs.core/array ~@(map (comp coll->cljs-array :path) dynamic))
-      (cljs.core/array ~@(->> dynamic
-                              (map :var-deps)
-                              (map var-deps->indexes)
-                              (map coll->cljs-array)))
-      (cljs.core/array ~@(map :type dynamic))
+      (fn [] ~static)
+      ~(->> dynamic (map :var-deps) (map var-deps->indexes)
+            coll->js-array)
       (cljs.core/array ~@(map :form dynamic))
-      (cljs.core/array ~@(keys tracked-vars))
+      ~(coll->js-array (keys tracked-vars))
       ~(swap! component-id inc) nil 1 1 nil)))
 
 (alter-var-root #'*cljs-data-readers* assoc 'h

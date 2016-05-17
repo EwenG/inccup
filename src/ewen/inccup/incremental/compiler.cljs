@@ -5,6 +5,11 @@
 
 (def ^:dynamic *tmp-val* nil)
 
+(defn array-with-meta [update-path dynamic arr]
+  (aset arr "inccup/update-path" update-path)
+  (aset arr "inccup/dynamic" dynamic)
+  arr)
+
 (defn maybe-merge-attributes [tag-attrs expr]
   (set! *tmp-val* expr)
   (if (map? expr)
@@ -165,24 +170,23 @@
               (recur inccup-seq l (inc seq-index)))))))
 
 (defn walk-children-comps [comp comp-fn direction]
-  (loop [value (.-value comp)
-         paths (.-paths comp)
-         index 0]
-    (when-let [path (aget paths index)]
-      (let [dec-path-length (dec (count path))
-            leaf (aget-in value path dec-path-length 0)]
-        (let [index-in-parent (aget path dec-path-length)
-              element (aget leaf index-in-parent)]
-          (cond (instance? Component element)
-                (if (= "top-bottom" direction)
-                  (do (comp-fn leaf index-in-parent element)
-                      (walk-children-comps element comp-fn direction))
-                  (do (walk-children-comps element comp-fn direction)
-                      (comp-fn leaf index-in-parent element)))
-                (inccup-seq? element)
-                (walk-seq-comps element comp-fn direction)
-                :else nil))
-        (recur value paths (inc index))))))
+  (loop [parent (.-value comp)
+         update-path (aget parent "inccup/update-path")
+         index 0
+         l (count update-path)]
+    (when (< index l)
+      (let [index-in-parent (aget update-path index)
+            element (aget parent index-in-parent)]
+        (cond (instance? Component element)
+              (if (= "top-bottom" direction)
+                (do (comp-fn parent index-in-parent element)
+                    (walk-children-comps element comp-fn direction))
+                (do (walk-children-comps element comp-fn direction)
+                    (comp-fn parent index-in-parent element)))
+              (inccup-seq? element)
+              (walk-seq-comps element comp-fn direction)
+              :else nil))
+      (recur parent update-path (inc index) l))))
 
 (defn delete-prev-form
   [element index prev-form parent-comps remove-element unmount-comp]
@@ -307,7 +311,7 @@
               (do
                 (delete-prev-form element index prev-form parent-comps
                                   remove-element unmount-comp)
-                (create-element element index (str form))
+                (create-element element index (str form) true)
                 (aset element index (str form)))))))
 
 (defn attrs->js [attrs]
@@ -316,7 +320,6 @@
 
 (defn diff-attrs [element index new-attrs update-attribute]
   (let [old-attrs (aget element index)]
-    (aset element index (attrs->js new-attrs))
     (let [new-attrs-keys (js-obj)]
       (loop [attrs-keys (keys new-attrs)]
         (when-let [k (first attrs-keys)]
@@ -325,16 +328,16 @@
                 v (str (get new-attrs k))]
             (aset new-attrs-keys k-name nil)
             (when (not= old-v v)
-              (aset old-attrs k-name v)
-              (update-attribute element index k-name old-v v))
+              (update-attribute element index k-name old-v v)
+              (aset old-attrs k-name v))
             (recur (rest attrs-keys)))))
       (goog.object/forEach
        old-attrs (fn [v k _]
                    (when-not (goog.object/containsKey new-attrs-keys k)
-                     (goog.object/remove old-attrs k)
-                     (update-attribute element index k v nil)))))))
+                     (update-attribute element index k v nil)
+                     (goog.object/remove old-attrs k)))))))
 
-(defn update-form-dispatch [element index form form-type
+#_(defn update-form-dispatch [element index form form-type
                             parent-comps
                             update-tag update-attribute
                             remove-element create-element
@@ -363,38 +366,7 @@
                            mount-comp unmount-comp)
     (throw (js/Error. (str "Invalid form-type: " form-type)))))
 
-(defn create-static [parent index static create-element]
-  (when static
-    (create-element parent index static)
-    (let [maybe-attrs (aget static 1)]
-      (loop [index (if (and (not (array? maybe-attrs))
-                            (not (nil? maybe-attrs))
-                            (not (string? maybe-attrs)))
-                     2 1)]
-        (when-let [next-child (aget static index)]
-          (create-static static index next-child create-element))))))
-
-#_(defn clone-with-path [static path index]
-  (if (< index (count path))
-    (let [current-vec (if (aget static "inccup/cloned")
-                        static
-                        (doto (aclone static)
-                          (aset "inccup/cloned" true)))]
-      (doto current-vec
-        (aset (aget path index)
-              (clone-with-path (aget static (aget path index))
-                               path (inc index)))))
-    static))
-
-#_(defn clone-with-paths [static paths]
-  (loop [paths paths
-         index 0]
-    (when-let [path (aget paths index)]
-      (clone-with-path static path 0)
-      (recur paths (inc index))))
-    static)
-
-(defn identical-params? [deps-indexes prev-params params]
+(defn identical-params? [prev-params params deps-indexes]
   (loop [deps-indexes deps-indexes
          index 0]
     (if-let [deps-index (aget deps-indexes index)]
@@ -404,7 +376,139 @@
         false)
       true)))
 
-(deftype Component [static paths var-deps form-types forms params id
+(defn create-static [parent index static create-element]
+  (when static
+    (create-element parent index static false)
+    (let [maybe-attrs (aget static 1)]
+      (loop [index 2
+             l (count static)]
+        (when (< index static)
+          (let [next-child (aget static index)]
+            (create-static static index next-child create-element)
+            (recur (inc index) l)))))))
+
+(defn create-comp-elements
+  [parent index static forms form-index update-path
+   parent-comps
+   update-tag update-attribute
+   remove-element create-element
+   move-comp
+   will-update did-update
+   mount-comp unmount-comp]
+  (let [dynamic (aget static "inccup/dynamic")]
+    (loop [index 0
+           update-path-index 0
+           next-index (aget update-path update-path-index)
+           l (count static)]
+      (when (< index l)
+        (if (> index 1)
+          (let [next-child (aget static index)]
+            (if (= index next-index)
+              (do
+                (if-let [next-update-path
+                         (when next-child
+                           (aget next-child "inccup/update-path"))]
+                  (create-comp-elements static index next-child
+                                        forms form-index next-update-path
+                                        parent-comps
+                                        update-tag update-attribute
+                                        remove-element create-element
+                                        move-comp
+                                        will-update did-update
+                                        mount-comp unmount-comp)
+                  (let [form ((aget forms @form-index))]
+                    (vswap! form-index inc)
+                    (diff-children static index form
+                                   parent-comps
+                                   update-tag update-attribute
+                                   remove-element create-element
+                                   move-comp
+                                   will-update did-update
+                                   mount-comp unmount-comp)))
+                (recur (inc index) (inc update-path-index)
+                       (aget update-path (inc update-path-index)) l))
+              (do
+                (create-static static index next-child create-element)
+                (recur (inc index) update-path-index
+                       next-index l))))
+          (cond
+            (= next-index 1)
+            (do
+              (aset static 1 (attrs->js ((aget forms @form-index))))
+              (vswap! form-index inc)
+              (recur (inc index) (inc update-path-index)
+                     (aget update-path (inc update-path-index)) l))
+            (= next-index 0)
+            (do
+              (aset static 0 (name ((aget forms @form-index))))
+              (vswap! form-index inc)
+              (recur (inc index) (inc update-path-index)
+                     (aget update-path (inc update-path-index)) l))
+            (= index 1)
+            (do
+              (create-element parent index static dynamic)
+              (recur (inc index) update-path-index
+                     next-index l))
+            :else (recur (inc index) update-path-index
+                         next-index l)))))))
+
+(defn update-comp-elements
+  [static forms var-deps form-index
+   identical-params? update-path
+   parent-comps
+   update-tag update-attribute
+   remove-element create-element move-comp
+   will-update did-update
+   mount-comp unmount-comp]
+  (loop [update-path-index 0
+         l (count update-path)]
+    (when (< update-path-index l)
+      (let [index (aget update-path update-path-index)]
+        (cond (> index 1)
+              (let [next-child (aget static index)]
+                (if-let [next-update-path
+                         (when next-child
+                           (aget next-child "inccup/update-path"))]
+                  (update-comp-elements next-child forms var-deps
+                                        form-index identical-params?
+                                        next-update-path
+                                        parent-comps
+                                        update-tag update-attribute
+                                        remove-element create-element
+                                        move-comp
+                                        will-update did-update
+                                        mount-comp unmount-comp)
+                  (do
+                    (when-not (identical-params?
+                               (aget var-deps @form-index))
+                      (let [new-element ((aget forms @form-index))]
+                        (diff-children static index
+                                       new-element parent-comps
+                                       update-tag update-attribute
+                                       remove-element create-element
+                                       move-comp
+                                       will-update did-update
+                                       mount-comp unmount-comp)))
+                    (vswap! form-index inc)
+                    (recur (inc update-path-index) l))))
+              (= index 1)
+              (do
+                (when-not (identical-params? (aget var-deps @form-index))
+                  (diff-attrs static 1 ((aget forms @form-index))
+                              update-attribute))
+                (vswap! form-index inc)
+                (recur (inc update-path-index) l))
+              (= index 0)
+              (do
+                (let [old-tag (aget static 0)
+                      new-tag (name ((aget forms @form-index)))]
+                  (when-not (= old-tag new-tag)
+                    (update-tag static old-tag new-tag)
+                    (aset static 0 new-tag)))
+                (vswap! form-index inc)
+                (recur (inc update-path-index) l)))))))
+
+(deftype Component [static var-deps forms params id
                     ^:mutable key ^:mutable level max-level
                     ^:mutable value]
   IDeref
@@ -418,27 +522,17 @@
     (init-keymap c max-level)
     (update-parent-comps parent-comps c max-level)
     (let [static (static)]
-      (create-static parent index static create-element)
-      (loop [static static
-             paths paths
-             index 0]
-        (if-let [path (aget paths index)]
-          (let [dec-path-length (dec (count path))
-                leaf (aget-in static path dec-path-length 0)]
-            (update-form-dispatch leaf
-                                  (aget path dec-path-length)
-                                  (aget forms index)
-                                  (aget form-types index)
-                                  parent-comps
-                                  update-tag update-attribute
-                                  remove-element create-element
-                                  move-comp
-                                  will-update did-update
-                                  mount-comp unmount-comp)
-            (recur static paths (inc index)))
-          (set! value static))))
-    (when key
-        (register-comp-key parent-comps c))
+      (create-comp-elements parent index static forms (volatile! 0)
+                            (or (aget static "inccup/update-path")
+                                #js [])
+                            parent-comps
+                            update-tag update-attribute
+                            remove-element create-element
+                            move-comp
+                            will-update did-update
+                            mount-comp unmount-comp)
+      (set! value static))
+    (when key (register-comp-key parent-comps c))
     (mount-comp parent index c)
     (walk-children-comps c mount-comp "top-bottom")
     c)
@@ -449,26 +543,16 @@
                 mount-comp unmount-comp]
     (will-update c)
     (update-parent-comps (or parent-comps #js []) prev-comp max-level)
-    (loop [tree @prev-comp
-           paths paths
-           index 0]
-      (when-let [path (aget paths index)]
-        (when-not (identical-params? (aget var-deps index)
-                                     (.-params prev-comp)
-                                     params)
-          (let [dec-path-length (dec (count path))
-                leaf (aget-in tree path dec-path-length 0)]
-            (update-form-dispatch leaf
-                                  (aget path dec-path-length)
-                                  (aget forms index)
-                                  (aget form-types index)
-                                  parent-comps
-                                  update-tag update-attribute
-                                  remove-element create-element
-                                  move-comp
-                                  will-update did-update
-                                  mount-comp unmount-comp)))
-        (recur tree paths (inc index))))
+    (update-comp-elements
+     @prev-comp forms var-deps (volatile! 0)
+     (partial identical-params? (.-params prev-comp) params)
+     (aget @prev-comp "inccup/update-path")
+     parent-comps
+     update-tag update-attribute
+     remove-element create-element
+     move-comp
+     will-update did-update
+     mount-comp unmount-comp)
     (clean-comp-keys prev-comp max-level)
     (did-update c)
     prev-comp)

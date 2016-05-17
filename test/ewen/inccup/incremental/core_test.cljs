@@ -157,7 +157,6 @@
       (is (inccup= @comp
                    #js ["div" #js {:f "f"} nil "t"]))
       (update-comp (def2 'div 5 "f") comp)
-      @comp
       (is (inccup= @comp
                    #js ["div" #js {} "5" "f"])))))
 
@@ -207,8 +206,8 @@
                      #js ["p" #js {:id "ii", :class "cc ", :e ""}
                           nil "4"]]])))))
 
-(defn template3 [x] #h [:p {:class x} nil x])
-(defn template4 [x] #h [:p {} (for [y x]
+#_(defn template3 [x] #h [:p {:class x} nil x])
+#_(defn template4 [x] #h [:p {} (for [y x]
                                 (with-key y (template3 (inc y))))])
 
 #_(deftest keyedChildren
