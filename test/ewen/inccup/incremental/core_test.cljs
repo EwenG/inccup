@@ -4,7 +4,8 @@
             [ewen.inccup.incremental.compiler :as comp
              :refer [Component]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
-            [goog.array])
+            [goog.array]
+            [goog.dom])
   (:require-macros [ewen.inccup.incremental.core-test-macros])
   (:refer-clojure :exclude [-equiv]))
 
@@ -80,70 +81,24 @@
        (inccup= y (first more)))
      false)))
 
-(def ^:dynamic *effects* nil)
-
-(defn update-tag [parent index old-tag new-tag]
-  (when *effects*
-    (set!
-     *effects*
-     (conj *effects* [:update-tag parent index old-tag new-tag]))))
-
-(defn update-attribute [parent index k old-v new-v]
-  (when *effects*
-    (set!
-     *effects*
-     (conj *effects* [:update-attribute parent index k old-v new-v]))))
-
-(defn remove-element [parent index]
-  (when *effects*
-    (set!
-     *effects*
-     (conj *effects* [:remove-element parent index]))))
-
-(defn create-element [parent index element]
-  (when *effects*
-    (set!
-     *effects*
-     (conj *effects* [:create-element parent index element]))))
-
-(defn move-comp [element index comp]
-  (when *effects*
-    (set!
-     *effects*
-     (conj *effects* [:move-comp element index comp]))))
-
-(defn will-update [comp]
-  (when *effects*
-    (set! *effects* (conj *effects* [:will-update comp]))))
-
-(defn did-update [comp]
-  (when *effects*
-    (set! *effects* (conj *effects* [:did-update comp]))))
-
-(defn mount-comp [parent index comp]
-  (when *effects*
-    (set! *effects* (conj *effects* [:mount-comp parent index comp]))))
-
-(defn unmount-comp [parent index comp]
-  (when *effects*
-    (set! *effects* (conj *effects* [:unmount-comp parent index comp]))))
+(defn new-root []
+  (let [old-root (.getElementById js/document "root")
+        new-root (goog.dom/createDom "div" #js {:id "root"})]
+    (if old-root
+      (goog.dom/replaceNode new-root old-root)
+      (goog.dom/appendChild (.-body js/document) new-root))
+    new-root))
 
 (defn create-comp [c]
-  (comp/create-comp
-   c nil nil #js []
-   update-tag update-attribute remove-element create-element move-comp
-   will-update did-update mount-comp unmount-comp))
-
-(defn update-comp [c prev-c]
-  (comp/update-comp
-   c prev-c #js []
-   update-tag update-attribute remove-element create-element move-comp
-   will-update did-update mount-comp unmount-comp))
+  (comp/create-comp (new-root)
+                    (or (aget c "inccup/globals")
+                        (aset c "inccup/globals" #js{}))
+                    c))
 
 (defn def1 [x] #h [:div#ii.cc {} x])
 (defn def2 [x y z] #h [x y z])
 
-(deftest test1
+#_(deftest test1
   (testing "test1"
     (let [comp (def1 "e")]
       (is (inccup= @(create-comp comp)
@@ -160,11 +115,11 @@
       (is (inccup= @comp
                    #js ["div" #js {} "5" "f"])))))
 
-(defn template1 [x] #h[:p#ii.cc {:e x :class x} x "4"])
-(defn template2 [x z] #h [:p {} (count x) #h [:p z]
+#_(defn template1 [x] #h[:p#ii.cc {:e x :class x} x "4"])
+#_(defn template2 [x z] #h [:p {} (count x) #h [:p z]
                           (for [y x] (template1 y))])
 
-(deftest test2
+#_(deftest test2
   (testing "test2"
     (let [comp (template2 (list 1 2) nil)]
       (binding [*effects* []]

@@ -4,7 +4,8 @@
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]
-            [cljs.tagged-literals :refer [*cljs-data-readers*]]))
+            [cljs.tagged-literals :refer [*cljs-data-readers*]]
+            [clojure.pprint :refer [pprint pp]]))
 
 (def ^:dynamic *dynamic-forms* nil)
 (def ^:dynamic *tracked-vars* #{})
@@ -14,14 +15,7 @@
 (def ^:dynamic *statics* [])
 (defonce component-id (atom 0))
 
-(defn new-local-binding [name env]
-  {:name name
-   :binding-form? true
-   :op :var
-   :env env
-   :info {:name name, :shadow nil}
-   :shadow nil
-   :local true})
+(deftype DynamicLeaf [index])
 
 (defn track-vars [expr]
   (binding [*tracked-vars* *tracked-vars*]
@@ -31,29 +25,23 @@
                           (vals *tracked-vars*))]
       [cljs-expanded (set used-vars)])))
 
-(defn update-dynamic-forms [expr path used-vars form-type]
+(defn update-dynamic-forms [expr path used-vars]
   (when *dynamic-forms*
     (set! *dynamic-forms*
           (conj *dynamic-forms*
                 {:path path
                  :var-deps used-vars
                  :form expr
-                 :type form-type}))))
+                 :indexes #{(count *dynamic-forms*)}}))))
 
-(defn compile-dynamic-expr [expr path form-type]
+(defn compile-dynamic-expr [expr path]
   (let [[expr used-vars] (track-vars expr)]
-    (update-dynamic-forms `(fn [] ~expr)
-                          path used-vars form-type)
-    nil))
+    (update-dynamic-forms `(fn [] ~expr) path used-vars)
+    (->DynamicLeaf (-> *dynamic-forms* count dec))))
 
-(defn compile-attr-map
-  "Returns an unevaluated form that will render the supplied map as HTML
-  attributes."
-  [attrs path]
-  (if (some util/unevaluated?
-            (mapcat identity attrs))
-    (compile-dynamic-expr attrs path "attrs")
-    attrs))
+(defn compile-attr-map [attrs path]
+  (compile-dynamic-expr attrs path)
+  nil)
 
 (defn maybe-attr-map
   ([attrs attr-path path tag-attrs]
@@ -66,8 +54,8 @@
            form `#(if (map? ewen.inccup.incremental.compiler/*tmp-val*)
                     nil
                     ewen.inccup.incremental.compiler/*tmp-val*)]
-       (update-dynamic-forms attr-form attr-path used-vars "maybe-attrs")
-       (update-dynamic-forms form path used-vars "or-attrs-child")
+       (update-dynamic-forms attr-form attr-path used-vars)
+       (update-dynamic-forms form path used-vars)
        nil))))
 
 (defn- literal?
@@ -80,8 +68,7 @@
 (defn dynamic-tag [tag path]
   {:pred [(not (literal? tag))]}
   (let [[expr used-vars] (track-vars tag)]
-    (update-dynamic-forms `(fn [] ~expr)
-                          path used-vars "tag")
+    (update-dynamic-forms `(fn [] ~expr) path used-vars)
     nil))
 
 (defn- form-name
@@ -123,30 +110,19 @@
     (number? x) (str x)
     (keyword? x) (name x)
     (symbol? x) (str x)
-    (vector? x) (if (nil? (first x))
+    (vector? x) (if (instance? DynamicLeaf (first x))
                   (let [[tag attrs & content] x]
-                    (if-let [{:keys [update-path dynamic]} (meta x)]
-                      `(ewen.inccup.incremental.compiler/array-with-meta
-                        ~(coll->js-array update-path) ~dynamic
-                        (cljs.core/array ~tag
-                                         ~(literal->js attrs)
-                                         ~@(map literal->js content)))
-                      `(cljs.core/array ~tag
-                                        ~(literal->js attrs)
-                                        ~@(map literal->js content))))
+                    `(cljs.core/array ~(.-index tag)
+                                      ~(literal->js attrs)
+                                      ~@(map literal->js content)))
                   (let [[tag attrs content] (util/normalize-element x)]
-                    (if-let [{:keys [update-path dynamic]} (meta x)]
-                      `(ewen.inccup.incremental.compiler/array-with-meta
-                        ~(coll->js-array update-path) ~dynamic
-                        (cljs.core/array ~tag
-                                         ~(literal->js attrs)
-                                         ~@(map literal->js content)))
-                      `(cljs.core/array ~tag
-                                        ~(literal->js attrs)
-                                        ~@(map literal->js content)))))
+                    `(cljs.core/array ~tag
+                                      ~(literal->js attrs)
+                                      ~@(map literal->js content))))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
                              (map literal->js (vals x))))
+    (instance? DynamicLeaf x) (.-index x)
     :else (throw (IllegalArgumentException.
                   (str "Not a literal element: " x)))))
 
@@ -159,17 +135,24 @@
   [[tag attrs & content :as element] path]
   (cond
     (every? literal? element)
-    ::all-literal                    ; e.g. [:span "foo"]
-    (and (literal? tag) (map? attrs))
-    ::literal-tag-and-attributes     ; e.g. [:span {} x]
+    ::all-literal
+    (and (literal? tag)
+         (map? attrs)
+         (every? literal? attrs))
+    ::literal-tag-and-literal-attributes
+    (and (literal? tag)
+         (map? attrs))
+    ::literal-tag-and-map-attributes
     (and (literal? tag) (not-implicit-map? attrs))
-    ::literal-tag-and-no-attributes  ; e.g. [:span ^String x]
+    ::literal-tag-and-no-attributes
     (literal? tag)
-    ::literal-tag                    ; e.g. [:span x]
+    ::literal-tag
+    (and (map? attrs) (every? literal? attrs))
+    ::literal-attributes
     (map? attrs)
-    ::attributes                     ; e.g. [x {}]
+    ::map-attributes
     (not-implicit-map? attrs)
-    ::no-attributes                  ; e.g. [x ^String y]
+    ::no-attributes
     :else
     ::default))
 
@@ -182,11 +165,17 @@
 (defmethod compile-element ::all-literal
   [element path] element)
 
-(defmethod compile-element ::literal-tag-and-attributes
+(defmethod compile-element ::literal-tag-and-literal-attributes
   [[tag attrs & content] path]
-  (let [[tag attrs _] (util/normalize-element [tag attrs])
-        compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (into [tag (or compiled-attrs {})] (compile-seq content path 2))))
+  (let [[tag attrs _] (util/normalize-element [tag attrs])]
+    (into [tag attrs] (compile-seq content path 2))))
+
+(defmethod compile-element ::literal-tag-and-map-attributes
+  [[tag attrs & content] path]
+  (let [[tag attrs _] (util/normalize-element [tag attrs])]
+    (compile-attr-map attrs (conj path 1))
+    (into [tag (-> *dynamic-forms* count dec ->DynamicLeaf)]
+          (compile-seq content path 2))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content] path]
@@ -197,13 +186,23 @@
   (let [[tag tag-attrs [first-content & rest-content]]
         (util/normalize-element element)]
     (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
-    (into [tag (or tag-attrs {}) nil] (compile-seq rest-content path 3))))
+    (into [tag (-> *dynamic-forms* count dec dec ->DynamicLeaf)
+           (-> *dynamic-forms* count dec ->DynamicLeaf)]
+          (compile-seq rest-content path 3))))
 
-(defmethod compile-element ::attributes
+(defmethod compile-element ::literal-attributes
   [[tag attrs & rest-content] path]
   (dynamic-tag tag (conj path 0))
-  (let [compiled-attrs (compile-attr-map attrs (conj path 1))]
-    (into [nil (or compiled-attrs {})] (compile-seq rest-content path 2))))
+  (into [(-> *dynamic-forms* count dec ->DynamicLeaf) attrs]
+        (compile-seq rest-content path 2)))
+
+(defmethod compile-element ::map-attributes
+  [[tag attrs & rest-content] path]
+  (dynamic-tag tag (conj path 0))
+  (compile-attr-map attrs (conj path 1))
+  (into [(-> *dynamic-forms* count dec dec ->DynamicLeaf)
+         (-> *dynamic-forms* count dec ->DynamicLeaf)]
+        (compile-seq rest-content path 2)))
 
 (defmethod compile-element ::no-attributes
   [[tag & content] path]
@@ -212,11 +211,15 @@
 (defmethod compile-element ::default
   [[tag attrs & rest-content :as element] path]
   (dynamic-tag tag (conj path 0))
-  (if (= 1 (count element))
-    [nil {}]
-    (do
-      (maybe-attr-map attrs (conj path 1) (conj path 2) {})
-      (into [nil {} nil] (compile-seq rest-content path 3)))))
+  (let [tag-index (-> *dynamic-forms* count dec ->DynamicLeaf)]
+    (if (= 1 (count element))
+      [tag-index {}]
+      (do
+        (maybe-attr-map attrs (conj path 1) (conj path 2) {})
+        (into [tag-index
+               (-> *dynamic-forms* count dec dec ->DynamicLeaf)
+               (-> *dynamic-forms* count dec ->DynamicLeaf)]
+              (compile-seq rest-content path 3))))))
 
 (declare compile-dispatch)
 
@@ -239,41 +242,146 @@
     (string? expr) expr
     (keyword? expr) expr
     (literal? expr) expr
-    (seq? expr) (compile-dynamic-expr expr path "child")
-    :else (compile-dynamic-expr expr path "child")))
+    (seq? expr) (compile-dynamic-expr expr path)
+    :else (compile-dynamic-expr expr path)))
+
+(defn compute-common-path [dynamic-forms]
+  (let [indexes (apply union (map :indexes dynamic-forms))
+        path-groups (->> (map :path dynamic-forms)
+                         (apply interleave)
+                         (partition (count dynamic-forms)))
+        common-path (loop [[path-group & rest-path-groups] path-groups
+                           common-path []]
+                      (if (or (nil? path-group) (not (apply = path-group)))
+                        common-path
+                        (recur rest-path-groups
+                               (conj common-path (first path-group)))))]
+    [common-path indexes]))
+
+(defn remove-from-path [n form]
+  {:post [(-> (:path %) empty? not)]}
+  (update form :path subvec n))
+
+(defn group-dynamic-forms [dynamic-forms]
+  (let [partitioned (partition-by (comp first :path) dynamic-forms)
+        forms (for [forms partitioned]
+                (if (= 1 (count forms))
+                  (first forms)
+                  (let [[common-path indexes] (compute-common-path forms)
+                        n (count common-path)
+                        updated-forms (map
+                                       (partial remove-from-path n)
+                                       forms)]
+                    {:path common-path :indexes indexes
+                     :sub-forms (group-dynamic-forms updated-forms)})))]
+    forms))
+
+(comment
+  (compute-common-path [{:path [2 0 0]
+                         :var-deps #{1}
+                         :indexes #{0}}
+                        {:path [2 0 1 0 0]
+                         :var-deps #{1 2}
+                         :indexes #{1}}
+                        {:path [2 0 1 0 1]
+                         :var-deps #{1 2}
+                         :indexes #{2}}])
+
+  (group-dynamic-forms '[{:path [2 0 0]
+                          :var-deps #{x}
+                          :form x
+                          :indexes #{0}}
+                         {:path [2 0 1 0 0]
+                          :var-deps #{x y}
+                          :form #(update-in % y)
+                          :indexes #{1}}
+                         {:path [2 0 1 0 1]
+                          :var-deps #{z}
+                          :form z
+                          :indexes #{2}}])
+
+  (group-dynamic-forms '[{:path [0 1]
+                          :var-deps #{x}
+                          :form x
+                          :indexes #{0}}
+                         {:path [2 0 0]
+                          :var-deps #{x}
+                          :form x
+                          :indexes #{1}}
+                         {:path [2 0 1 0 0]
+                          :var-deps #{x y}
+                          :form #(update-in % y)
+                          :indexes #{2}}
+                         {:path [2 0 1 0 1]
+                          :var-deps #{z}
+                          :form z
+                          :indexes #{3}}])
+
+  ;; Should throw an error
+  (group-dynamic-forms '[{:path [0 1] :var-deps #{x} :form x}
+                         {:path [2 0 1] :var-deps #{x} :form x}
+                         {:path [2 0 1 0 0]
+                          :var-deps #{x y}
+                          :form y}
+                         {:path [2 0 1 0 1]
+                          :var-deps #{z}
+                          :form z}])
+  )
+
+(defn dynamic-form->update-path [{:keys [path indexes sub-forms]}]
+  (let [indexes (-> indexes coll->js-array)
+        sub-paths (map dynamic-form->update-path sub-forms)]
+    `(ewen.inccup.incremental.compiler/array-with-path
+      ~indexes (cljs.core/array ~@path ~@sub-paths))))
+
+(comment
+  (dynamic-form->update-path
+   '{:path [2 0],
+     :indexes #{1 3 2},
+     :sub-forms
+     ({:path [0], :var-deps #{x}, :form x, :indexes #{1}}
+      {:path [1 0],
+       :indexes #{3 2},
+       :sub-forms
+       ({:path [0],
+         :var-deps #{x y},
+         :form (fn* [p1__14475#] (update-in p1__14475# y)),
+         :indexes #{2}}
+        {:path [1], :var-deps #{z}, :form z, :indexes #{3}})})})
+  )
+
+(defn dynamic-forms->update-path [forms]
+  (cond
+    (= 0 (count forms)) nil
+    (= 1 (count forms)) (dynamic-form->update-path (first forms))
+    :else
+    (let [indexes (->> (map :indexes forms)
+                       (apply union)
+                       coll->js-array)
+          update-paths (map dynamic-form->update-path forms)]
+      `(ewen.inccup.incremental.compiler/array-with-path
+        ~indexes
+        (cljs.core/array ~@update-paths)))))
+
+(comment
+  (dynamic-forms->update-path
+   '({:path [0 1], :var-deps #{x}, :form x, :indexes #{0}}
+     {:path [2 0],
+      :indexes #{1 3 2},
+      :sub-forms
+      ({:path [0], :var-deps #{x}, :form x, :indexes #{1}}
+       {:path [1 0],
+        :indexes #{3 2},
+        :sub-forms
+        ({:path [0],
+          :var-deps #{x y},
+          :form (fn* [p1__15207#] (update-in p1__15207# y)),
+          :indexes #{2}}
+         {:path [1], :var-deps #{z}, :form z, :indexes #{3}})})}))
+  )
 
 (defn var-deps->indexes [params var-deps]
   (map #(.indexOf params %) var-deps))
-
-(defn static-with-update-path [static dynamic]
-  (let [update-meta-fn
-        (fn [var-deps index m]
-          (-> m
-              (update-in [:update-path]
-                         (fn [update-path]
-                           (if (= index (peek update-path))
-                             update-path
-                             (conj (or update-path []) index))))
-              (update-in [:dynamic]
-                         (fn [d]
-                           (or d (> (count var-deps) 0))))))]
-    (loop [static static
-           dynamic dynamic]
-      (if-let [{:keys [path var-deps]} (first dynamic)]
-        (->
-         (loop [static static
-                rest-path path
-                update-path []]
-           (if-let [index (first rest-path)]
-             (-> (if (= [] update-path)
-                   (vary-meta static
-                              (partial update-meta-fn var-deps index))
-                   (update-in static update-path vary-meta
-                              (partial update-meta-fn var-deps index)))
-                 (recur (rest rest-path) (conj update-path index)))
-             static))
-         (recur (rest dynamic)))
-        static))))
 
 (defmacro component [forms]
   (let [params (->> (:locals &env)
@@ -293,16 +401,17 @@
                   *dynamic-forms* []
                   *tracked-vars* tracked-vars]
           [(compile-dispatch forms []) *dynamic-forms*])
-        static (static-with-update-path static dynamic)
+        _ (prn static)
         static (literal->js static)
+        update-path (-> (group-dynamic-forms dynamic)
+                        dynamic-forms->update-path)
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))]
-    `(ewen.inccup.incremental.compiler/Component.
-      (fn [] ~static)
-      ~(->> dynamic (map :var-deps) (map var-deps->indexes)
-            coll->js-array)
-      (cljs.core/array ~@(map :form dynamic))
+    `(ewen.inccup.incremental.compiler/->Component
+      ~(swap! component-id inc) 1 (fn [] ~static) (fn [] ~update-path)
       ~(coll->js-array (keys tracked-vars))
-      ~(swap! component-id inc) nil 1 1 nil)))
+      ~(->> dynamic (map :var-deps) (map var-deps->indexes) coll->js-array)
+      nil 1
+      (cljs.core/array ~@(map :form dynamic)))))
 
 (alter-var-root #'*cljs-data-readers* assoc 'h
                 (fn [forms]
@@ -342,8 +451,4 @@
                             '(let [e "e"]
                                e)))
     *tracked-vars*)
-  )
-
-(comment
-  (require '[clojure.pprint :refer [pprint pp]])
   )
