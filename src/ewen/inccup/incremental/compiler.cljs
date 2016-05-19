@@ -5,7 +5,7 @@
             [goog.dom]))
 
 (def ^:dynamic *tmp-val* nil)
-(def ^:dynamic *node* nil)
+(def ^:dynamic *globals* nil)
 
 (defn array-with-path [path arr]
   (aset arr "inccup/path" path)
@@ -368,12 +368,11 @@
     (throw (js/Error. (str "Invalid form-type: " form-type)))))
 
 (defn identical-params? [prev-params params deps-indexes]
-  (loop [deps-indexes deps-indexes
-         index 0]
+  (loop [index 0]
     (if-let [deps-index (aget deps-indexes index)]
       (if (identical? (aget prev-params deps-index)
                       (aget params deps-index))
-        (recur deps-indexes (inc index))
+        (recur (inc index))
         false)
       true)))
 
@@ -572,54 +571,89 @@
     (set! level l)
     c))
 
+(defn get-or-set-global [id k v]
+  (if *globals*
+    (if-let [comp-globals (aget *globals* id)]
+      (or (aget comp-globals k)
+          (aset comp-globals k v))
+      (aset *globals* id (js-obj k v "count" 0)))
+    v))
+
+(defn inc-comp-global [id]
+  (when *globals*
+    (when-let [comp-globals (aget *globals* id)]
+      (->> (aget comp-globals "count") inc
+           (aset comp-globals "count")))))
+
+(defn dec-comp-global [id]
+  (when *globals*
+    (when-let [comp-globals (aget *globals* id)]
+      (->> (aget comp-globals "count") dec
+           (aset comp-globals "count")))))
+
+(defn clean-globals []
+  (when *globals*
+    (goog.object/forEach
+     *globals* (fn [v k o]
+                 (when (= 0 (aget v "count"))
+                   (goog.object/remove o k))))))
+
+(defn make-var-deps-arr [params new-params var-deps]
+  (let [arr (make-array (count var-deps))]
+    (loop [index 0]
+      (when-let [indexes (aget var-deps index)]
+        (when (identical-params? params new-params indexes)
+          (aset arr index true))
+        (recur (inc index))))
+    arr))
+
+(defn make-true-arr [size]
+  (let [arr (make-array size)]
+    (loop [index 0]
+      (when (not= index size)
+        (aset arr index true)
+        (recur (inc index))))
+    arr))
+
 (defn walk-dynamic
-  [node globals comp new-comp container index element new-element]
+  [node new-comp element new-element]
   (cond
     (nil? new-element)
-    (aset container index nil)
+    nil
     :else
-    (let [element (aget container index)]
-      (->> (goog.dom/createTextNode new-element)
-           (goog.dom/appendChild node))
-      (aset container index new-element))))
+    (->> (goog.dom/createTextNode new-element)
+         (goog.dom/appendChild node))))
 
-(defn walk-static [node globals comp static forms]
+(defn walk-static [node comp static forms]
   (cond
     (nil? static)
     nil
     (number? static)
-    (let [form ((aget forms static))]
-      (walk-dynamic node globals nil comp forms static nil form))
+    (let [form (aget forms static)]
+      (walk-dynamic node comp nil form))
     :else
-    (let [tag (volatile! (first static))
-          attrs (volatile! (second static))]
-      (when (number? @tag)
-        (let [form (name ((aget forms @tag)))]
-          (aset forms @tag form)
-          (vreset! tag form)))
-      (when (number? @attrs)
-        (let [form (attrs->js ((aget forms @attrs)))]
-          (aset forms @attrs form)
-          (vreset! attrs form)))
-      (let [new-node (goog.dom/createDom @tag @attrs)]
+    (let [tag (if (number? (first static))
+                (->> (first static) (aget forms) name)
+                (first static))
+          attrs (if (number? (second static))
+                  (->> (second static) (aget forms) attrs->js)
+                  (second static))]
+      (let [new-node (goog.dom/createDom tag attrs)]
         (goog.dom/appendChild node new-node)
         (let [l (count static)]
           (loop [index 2]
             (when (< index l)
-              (walk-static new-node globals comp
-                           (aget static index) forms)
+              (walk-static new-node comp (aget static index) forms)
               (recur (inc index)))))))))
 
-(defn create-comp [node globals comp]
-  (let [global-comp (aget globals (.-id comp))
-        static (if global-comp
-                 (or (aget global-comp "static")
-                     (aset global-comp "static" ((.-static$ comp))))
-                 ((.-static$ comp)))
-        update-path (if global-comp
-                      (or (aget global-comp "update-path")
-                          (aset global-comp "update-path"
-                                ((.-update-path comp))))
-                      ((.-update-path comp)))]
-    (goog.dom/removeChildren node)
-    (walk-static node globals comp static (.-forms comp))))
+(defn create-comp* [node comp]
+  (let [var-deps (.-var-deps comp)
+        forms ((.-forms comp) (-> (.-var-deps comp) count make-true-arr))]
+    (inc-comp-global (.-id comp))
+    (walk-static node comp (.-static$ comp) forms)))
+
+(defn create-comp [node comp]
+  (binding [*globals* (or (aget comp "inccup/globals")
+                          (aset comp "inccup/globals" #js{}))]
+    (create-comp* node comp)
+    (clean-globals)))

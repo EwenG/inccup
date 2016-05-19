@@ -36,7 +36,7 @@
 
 (defn compile-dynamic-expr [expr path]
   (let [[expr used-vars] (track-vars expr)]
-    (update-dynamic-forms `(fn [] ~expr) path used-vars)
+    (update-dynamic-forms expr path used-vars)
     (->DynamicLeaf (-> *dynamic-forms* count dec))))
 
 (defn compile-attr-map [attrs path]
@@ -49,11 +49,11 @@
    (when attrs
      (let [[expr used-vars] (track-vars attrs)
            attr-form
-           `#(ewen.inccup.incremental.compiler/maybe-merge-attributes
-              ~tag-attrs ~expr)
-           form `#(if (map? ewen.inccup.incremental.compiler/*tmp-val*)
-                    nil
-                    ewen.inccup.incremental.compiler/*tmp-val*)]
+           `(ewen.inccup.incremental.compiler/maybe-merge-attributes
+             ~tag-attrs ~expr)
+           form `(if (map? ewen.inccup.incremental.compiler/*tmp-val*)
+                   nil
+                   ewen.inccup.incremental.compiler/*tmp-val*)]
        (update-dynamic-forms attr-form attr-path used-vars)
        (update-dynamic-forms form path used-vars)
        nil))))
@@ -68,7 +68,7 @@
 (defn dynamic-tag [tag path]
   {:pred [(not (literal? tag))]}
   (let [[expr used-vars] (track-vars tag)]
-    (update-dynamic-forms `(fn [] ~expr) path used-vars)
+    (update-dynamic-forms expr path used-vars)
     nil))
 
 (defn- form-name
@@ -383,6 +383,9 @@
 (defn var-deps->indexes [params var-deps]
   (map #(.indexOf params %) var-deps))
 
+(defn form-with-var-dep [var-deps-sym index form]
+  `(when (cljs.core/aget ~var-deps-sym ~index) ~form))
+
 (defmacro component [forms]
   (let [params (->> (:locals &env)
                     (filter (comp not :local second))
@@ -401,17 +404,30 @@
                   *dynamic-forms* []
                   *tracked-vars* tracked-vars]
           [(compile-dispatch forms []) *dynamic-forms*])
-        _ (prn static)
         static (literal->js static)
         update-path (-> (group-dynamic-forms dynamic)
                         dynamic-forms->update-path)
-        var-deps->indexes (partial var-deps->indexes (keys tracked-vars))]
+        var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
+        id (swap! component-id inc)]
     `(ewen.inccup.incremental.compiler/->Component
-      ~(swap! component-id inc) 1 (fn [] ~static) (fn [] ~update-path)
+      ~id 1
+      (ewen.inccup.incremental.compiler/get-or-set-global
+       ~id "static" ~static)
+      (ewen.inccup.incremental.compiler/get-or-set-global
+       ~id "update-path" ~update-path)
       ~(coll->js-array (keys tracked-vars))
-      ~(->> dynamic (map :var-deps) (map var-deps->indexes) coll->js-array)
+      (ewen.inccup.incremental.compiler/get-or-set-global
+       ~id "var-deps" ~(->> dynamic (map :var-deps)
+                            (map var-deps->indexes)
+                            coll->js-array))
       nil 1
-      (cljs.core/array ~@(map :form dynamic)))))
+      ~(let [var-deps-sym (gensym "var-deps")]
+         `(fn [~var-deps-sym]
+            (cljs.core/array
+             ~@(->> dynamic
+                    (map :form)
+                    (map-indexed
+                     (partial form-with-var-dep var-deps-sym)))))))))
 
 (alter-var-root #'*cljs-data-readers* assoc 'h
                 (fn [forms]
@@ -431,7 +447,8 @@
       (and (= :var op) local init)
       (collect-input-var-deps tracked-vars collected-vars init)
       (not (empty? children))
-      (->> (map (partial collect-input-var-deps tracked-vars collected-vars)
+      (->> (map (partial collect-input-var-deps
+                         tracked-vars collected-vars)
                 children)
            (apply union))
       :else collected-vars)))
