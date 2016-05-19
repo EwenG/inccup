@@ -11,6 +11,40 @@
 
 (set-print-fn! #(.log js/console %))
 
+;; node.isEqual is not ie8 compatible
+(defn node= [node1 node2]
+  (let [equal-nodes (volatile! true)]
+    (if (not= (.-nodeName node1) (.-nodeName node2))
+      (vreset! equal-nodes false)
+      (let [attrs1 (.-attributes node1)
+            attrs2 (.-attributes node2)]
+        (when (not (and (nil? attrs1) (nil? attrs2)))
+          (if (not= (.-length attrs1) (.-length attrs2))
+            (vreset! equal-nodes false)
+            (loop [index 0
+                   l (.-length attrs1)]
+              (when (and @equal-nodes (< index l))
+                (when (not= (.-name (aget attrs1 index))
+                            (.-name (aget attrs2 index)))
+                  (vreset! equal-nodes false))
+                (when (not= (.-value (aget attrs1 index))
+                            (.-value (aget attrs2 index)))
+                  (vreset! equal-nodes false))
+                (recur (inc index) l)))))))
+    (when @equal-nodes
+      (let [children1 (.-childNodes node1)
+            children2 (.-childNodes node2)]
+        (if (not= (.-length children1) (.-length children2))
+          (vreset! equal-nodes false)
+          (loop [index 0
+                 l (.-length children1)]
+            (when (and @equal-nodes (< index l))
+              (when-not (node= (aget children1 index)
+                               (aget children2 index))
+                (vreset! equal-nodes false))
+              (recur (inc index) l))))))
+    @equal-nodes))
+
 (declare inccup=)
 
 (defprotocol InccupEquiv
@@ -90,13 +124,15 @@
     new-root))
 
 (defn create-comp [c]
-  (comp/create-comp (new-root)
-                    (or (aget c "inccup/globals")
-                        (aset c "inccup/globals" #js{}))
-                    c))
+  (comp/create-comp (new-root) c))
 
 (defn def1 [x] #h [:div#ii.cc {} x])
 (defn def2 [x y z] #h [x y z])
+
+(comment
+  (create-comp (def1 "e"))
+  (create-comp (def2 :p {:e "e"} "t"))
+  )
 
 #_(deftest test1
   (testing "test1"
