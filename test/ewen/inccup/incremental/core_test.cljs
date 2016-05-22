@@ -2,7 +2,7 @@
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [with-key]]
             [ewen.inccup.incremental.compiler :as comp
-             :refer [Component]]
+             :refer [Component update-comp]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array]
             [goog.dom])
@@ -126,12 +126,21 @@
 (defn create-comp [c]
   (comp/create-comp (new-root) c))
 
+(defn root []
+  (.querySelector js/document "#root"))
+
 (defn def1 [x] #h [:div#ii.cc {} x])
 (defn def2 [x y z] #h [x y z])
 
 (comment
-  (create-comp (def1 "e"))
+  (->> (create-comp (def1 "e"))
+       (update-comp (.-firstChild (root)) (def1 "f")))
   (create-comp (def2 :p {:e "e"} "t"))
+
+  (.log js/console (.-firstChild (root)))
+  #_(let [div (.-firstChild (root))
+        tt (.-firstChild div)]
+    (.insertBefore div (goog.dom/createTextNode "r") tt))
   )
 
 #_(deftest test1
@@ -151,9 +160,13 @@
       (is (inccup= @comp
                    #js ["div" #js {} "5" "f"])))))
 
-#_(defn template1 [x] #h[:p#ii.cc {:e x :class x} x "4"])
-#_(defn template2 [x z] #h [:p {} (count x) #h [:p z]
+(defn template1 [x] #h[:p#ii.cc {:e x :class x} x "4"])
+(defn template2 [x z] #h [:p {} (count x) #h [:p z]
                           (for [y x] (template1 y))])
+
+(comment
+  (create-comp (template2 (list 1 2) nil))
+  )
 
 #_(deftest test2
   (testing "test2"

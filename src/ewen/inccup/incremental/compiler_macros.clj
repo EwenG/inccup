@@ -110,15 +110,18 @@
     (number? x) (str x)
     (keyword? x) (name x)
     (symbol? x) (str x)
-    (vector? x) (if (instance? DynamicLeaf (first x))
-                  (let [[tag attrs & content] x]
-                    `(cljs.core/array ~(.-index tag)
-                                      ~(literal->js attrs)
-                                      ~@(map literal->js content)))
-                  (let [[tag attrs content] (util/normalize-element x)]
-                    `(cljs.core/array ~tag
-                                      ~(literal->js attrs)
-                                      ~@(map literal->js content))))
+    (vector? x)
+    (let [update-paths (-> x meta :update-paths)
+          [tag attrs & content] x]
+      (if update-paths
+        `(ewen.inccup.incremental.compiler/array-with-path
+          ~(coll->js-array update-paths)
+          (cljs.core/array ~(literal->js tag)
+                           ~(literal->js attrs)
+                           ~@(map literal->js content)))
+        `(cljs.core/array ~(literal->js tag)
+                          ~(literal->js attrs)
+                          ~@(map literal->js content))))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
                              (map literal->js (vals x))))
@@ -380,6 +383,21 @@
          {:path [1], :var-deps #{z}, :form z, :indexes #{3}})})}))
   )
 
+(defn static-with-metas [static {:keys [path indexes]}]
+  (loop [static static
+         rest-path path
+         processed-path []]
+    (if-let [index (first rest-path)]
+      (if (empty? processed-path)
+        (recur (vary-meta static update-in [:update-paths] union indexes)
+               (rest rest-path)
+               (conj processed-path index))
+        (recur (update-in static processed-path vary-meta update-in
+                          [:update-paths] union indexes)
+               (rest rest-path)
+               (conj processed-path index)))
+      static)))
+
 (defn var-deps->indexes [params var-deps]
   (map #(.indexOf params %) var-deps))
 
@@ -404,8 +422,14 @@
                   *dynamic-forms* []
                   *tracked-vars* tracked-vars]
           [(compile-dispatch forms []) *dynamic-forms*])
+        static (loop [static static
+                      dynamic dynamic]
+                 (if-let [update-path (first dynamic)]
+                   (recur (static-with-metas static update-path)
+                          (rest dynamic))
+                   static))
         static (literal->js static)
-        update-path (-> (group-dynamic-forms dynamic)
+        #_update-path #_(-> (group-dynamic-forms dynamic)
                         dynamic-forms->update-path)
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         id (swap! component-id inc)]
@@ -413,7 +437,7 @@
       ~id 1
       (ewen.inccup.incremental.compiler/get-or-set-global
        ~id "static" ~static)
-      (ewen.inccup.incremental.compiler/get-or-set-global
+      #_(ewen.inccup.incremental.compiler/get-or-set-global
        ~id "update-path" ~update-path)
       ~(coll->js-array (keys tracked-vars))
       (ewen.inccup.incremental.compiler/get-or-set-global
