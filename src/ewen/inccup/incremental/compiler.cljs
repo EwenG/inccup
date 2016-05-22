@@ -580,7 +580,7 @@
     (aset comp "inccup/var-deps-arr" var-deps-arr)
     (create-comp-elements (.-static$ comp) forms)))
 
-(defn update-comp* [parent node comp prev-comp]
+(defn update-comp* [prev-comp comp parent node]
   (let [var-deps (.-var-deps comp)
         params (.-params comp)
         prev-params (.-params prev-comp)
@@ -594,16 +594,16 @@
     (update-comp-elements parent node (.-static$ comp)
                           var-deps-arr forms prev-forms)))
 
-(defn create-comp [node comp]
+(defn create-comp [comp node]
   (binding [*globals* (aset comp "inccup/globals" #js{})]
     (.appendChild node (create-comp* comp))
     comp))
 
-(defn update-comp [node comp prev-comp]
+(defn update-comp [prev-comp comp node]
   (binding [*globals* (aget prev-comp "inccup/globals")]
     (assert (not (nil? *globals*)))
     (assert (= (.-id comp) (.-id prev-comp)))
     (aset comp "inccup/globals" *globals*)
-    (update-comp* (.-parentNode node) node comp prev-comp)
+    (update-comp* prev-comp comp (.-parentNode node) node)
     (clean-globals)
     comp))

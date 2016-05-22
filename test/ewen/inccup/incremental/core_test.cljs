@@ -124,7 +124,7 @@
     new-root))
 
 (defn create-comp [c]
-  (comp/create-comp (new-root) c))
+  (comp/create-comp c (new-root)))
 
 (defn root []
   (.querySelector js/document "#root"))
@@ -133,8 +133,8 @@
 (defn def2 [x y z] #h [x y z])
 
 (comment
-  (->> (create-comp (def1 "e"))
-       (update-comp (.-firstChild (root)) (def1 "f")))
+  (-> (create-comp (def1 "e"))
+      (update-comp (def1 "f") (.-firstChild (root))))
   (create-comp (def2 :p {:e "e"} "t"))
 
   (.log js/console (.-firstChild (root)))
