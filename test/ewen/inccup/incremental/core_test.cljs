@@ -131,16 +131,29 @@
 
 (defn def1 [x] #h [:div#ii.cc {} x])
 (defn def2 [x y z] #h [x y z])
+(defn def3 [x] #h [:div#ii.cc x])
 
 (comment
   (-> (create-comp (def1 "e"))
-      (update-comp (def1 "f") (.-firstChild (root))))
-  (create-comp (def2 :p {:e "e"} "t"))
+      (update-comp (def1 "f") (.-firstChild (root)))
+      (update-comp (def1 "g") (.-firstChild (root))))
 
-  (.log js/console (.-firstChild (root)))
-  #_(let [div (.-firstChild (root))
-        tt (.-firstChild div)]
-    (.insertBefore div (goog.dom/createTextNode "r") tt))
+  (def cc (create-comp (def2 :p {:class "c"} "t")))
+  (update-comp cc
+               (def2 :p {:class "c2"} "t")
+               (.-firstChild (root)))
+
+  (-> (create-comp (def2 :p {:class "c"} "t"))
+      (update-comp (def2 :p {:class "c2"} "t")
+                   (.-firstChild (root))))
+
+  (-> (create-comp (def3 "e"))
+      (update-comp (def3 "f") (.-firstChild (root)))
+      #_(update-comp (def3 "g") (.-firstChild (root))))
+
+  (.appendChild (new-root) (goog.dom/htmlToDocumentFragment "<div>ee dd ff
+
+ gg   </div>"))
   )
 
 #_(deftest test1

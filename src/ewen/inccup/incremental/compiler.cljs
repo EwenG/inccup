@@ -429,12 +429,12 @@
               prev-e (first prev-elements)]
           (when (or e prev-e)
             (recur (diff-children parent node e prev-e)
-             (rest elements) (rest prev-elements)))))
+                   (rest elements) (rest prev-elements)))))
       (do
         (loop [elements element]
           (when-let [e (first elements)]
             (diff-children parent node e nil)
-            (recur (rest element))))
+            (recur (rest elements))))
         (delete-prev-element parent node prev-element)))
     (nil? element)
     (delete-prev-element parent node prev-element)
@@ -469,8 +469,8 @@
               (number? child)
               (let [form (aget forms child)]
                 (diff-children new-node nil form nil))
-              (string? static)
-              (->> (goog.dom/createTextNode static)
+              (string? child)
+              (->> (goog.dom/createTextNode child)
                    (.appendChild new-node))
               :else
               (->> (create-comp-elements child forms)
@@ -566,7 +566,7 @@
               (when (< index l)
                 (recur
                  (update-comp-elements
-                  node child (aget static index)
+                  maybe-new-node child (aget static index)
                   var-deps-arr forms prev-forms)
                  (inc index))))
             (next-sibling maybe-new-node)))
@@ -576,8 +576,8 @@
   (let [var-deps-arr (-> (.-var-deps comp) count make-true-arr)
         forms ((.-forms comp) var-deps-arr)]
     (set! (.-forms comp) forms)
-    (inc-comp-global (.-id comp))
     (aset comp "inccup/var-deps-arr" var-deps-arr)
+    (inc-comp-global (.-id comp))
     (create-comp-elements (.-static$ comp) forms)))
 
 (defn update-comp* [prev-comp comp parent node]
@@ -590,6 +590,8 @@
                           (make-var-deps-arr
                            var-deps-arr params prev-params))
         forms ((.-forms comp) var-deps-arr)]
+    (set! (.-forms comp) forms)
+    (aset comp "inccup/var-deps-arr" var-deps-arr)
     (copy-unchanged-forms var-deps-arr forms prev-forms)
     (update-comp-elements parent node (.-static$ comp)
                           var-deps-arr forms prev-forms)))
