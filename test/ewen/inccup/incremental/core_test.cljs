@@ -138,13 +138,13 @@
       (update-comp (def1 "f") (.-firstChild (root)))
       (update-comp (def1 "g") (.-firstChild (root))))
 
-  (def cc (create-comp (def2 :p {:class "c"} "t")))
+  (def cc (create-comp (def2 :p {:e "e"} "t")))
   (update-comp cc
                (def2 :p {:class "c2"} "t")
                (.-firstChild (root)))
 
   (-> (create-comp (def2 :p {:class "c"} "t"))
-      (update-comp (def2 :p {:class "c2"} "t")
+      (update-comp (def2 :p {:class "c2" :e "e"} "t")
                    (.-firstChild (root))))
 
   (-> (create-comp (def3 "e"))
@@ -178,7 +178,9 @@
                           (for [y x] (template1 y))])
 
 (comment
-  (create-comp (template2 (list 1 2) nil))
+  (def cc (create-comp (template2 (list 1 2) nil)))
+  (update-comp cc (template2 (list 1 3) #h [:div]) (.-firstChild (root)))
+  (update-comp cc (template2 (list 4) {:class "c"}) (.-firstChild (root)))
   )
 
 #_(deftest test2

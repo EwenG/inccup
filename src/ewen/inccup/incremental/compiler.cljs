@@ -328,6 +328,47 @@
     (set! level l)
     c))
 
+(defn next-sibling [node]
+  (when node (.-nextSibling node)))
+
+(defn attr-as-prop [attr]
+  (case attr
+    "class" "className"
+    "for" "htmlFor"
+    "checked" "checked"
+    "multiple" "multiple"
+    "muted" "muted"
+    "selected" "selected"
+    "value" "value"
+    nil))
+
+;; Same as goog.dom.createDom but set custom attributes as html attributes
+;; instead of properties
+(defn create-dom [tag attrs]
+  (let [tag
+        ;;IE
+        (if (and
+             (not goog.dom.BrowserFeature.CAN_ADD_NAME_OR_TYPE_ATTRIBUTES)
+             (or (aget attrs "name")
+                 (aget attrs "type")))
+          (let [tag-arr #js ["<" tag]]
+            (when-let [attr-name (aget attrs "name")]
+              (.push
+               tag-arr " name=\"" (goog.string/htmlEscape attr-name) "\""))
+            (when-let [attr-type (aget attrs "type")]
+              (.push
+               tag-arr " type=\"" (goog.string/htmlEscape attr-type) "\""))
+            (.push tag-arr ">")
+            (.join tag-arr ""))
+          tag)
+        element (.createElement js/document tag)]
+    (goog.object/forEach
+     attrs (fn [v k o]
+             (if-let [prop-name (attr-as-prop k)]
+               (aset element prop-name (aget attrs k))
+               (.setAttribute element k (aget attrs k)))))
+    element))
+
 (defn get-or-set-global [id k v]
   (if *globals*
     (if-let [comp-globals (aget *globals* id)]
@@ -373,9 +414,6 @@
         (recur (inc index))))
     arr))
 
-(defn next-sibling [node]
-  (when node (.-nextSibling node)))
-
 (defn delete-prev-element [parent node prev-element]
   (let [next-node (if prev-element (next-sibling node) node)]
     (cond
@@ -416,7 +454,7 @@
     (instance? Component element)
     (if (and (instance? Component prev-element)
              (= (.-id element) (.-id prev-element)))
-      (update-comp* parent node element prev-element)
+      (update-comp* prev-element element parent node)
       (do
         (.insertBefore parent (create-comp* element) node)
         (delete-prev-element parent node prev-element)))
@@ -446,7 +484,8 @@
       (do
         (.insertBefore
          parent (goog.dom/createTextNode (str element)) node)
-        (delete-prev-element parent node prev-element)))))
+        (delete-prev-element parent node prev-element))
+      (next-sibling node))))
 
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
@@ -458,7 +497,7 @@
         attrs (if (number? (second static))
                 (->> (second static) (aget forms) attrs->js)
                 (second static))]
-    (let [new-node (goog.dom/createDom tag attrs)
+    (let [new-node (create-dom tag attrs)
           l (count static)]
       (loop [index 2]
         (when (< index l)
@@ -546,7 +585,7 @@
                 (let [attrs (if (number? attrs)
                               (attrs->js (aget forms attrs))
                               attrs)
-                      new-node (goog.dom/createDom
+                      new-node (create-dom
                                 (name (aget forms tag)) attrs)]
                   (if node
                     (replace-node-with-children parent new-node node)
@@ -559,7 +598,7 @@
             (when (or (not (identical? maybe-new-node node))
                       (and (number? attrs) (aget var-deps-arr attrs)))
               (diff-attrs
-               node (get forms attrs) (get prev-forms attrs)))
+               maybe-new-node (get forms attrs) (get prev-forms attrs)))
             (loop [child (when maybe-new-node
                            (.-firstChild maybe-new-node))
                    index 2]
@@ -581,8 +620,7 @@
     (create-comp-elements (.-static$ comp) forms)))
 
 (defn update-comp* [prev-comp comp parent node]
-  (let [var-deps (.-var-deps comp)
-        params (.-params comp)
+  (let [params (.-params comp)
         prev-params (.-params prev-comp)
         prev-forms (.-forms prev-comp)
         var-deps-arr (aget prev-comp "inccup/var-deps-arr")
