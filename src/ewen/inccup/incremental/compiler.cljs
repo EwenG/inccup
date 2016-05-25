@@ -586,12 +586,16 @@
              (let [prev-v (aget prev-attrs k)]
                (aset new-attrs-keys k nil)
                (when (not= prev-v v)
-                 (.setAttribute node k v)
+                 (if-let [prop-name (attr-as-prop k)]
+                   (aset node prop-name v)
+                   (.setAttribute node k v))
                  (aset prev-attrs k v)))))
     (goog.object/forEach
      prev-attrs (fn [v k _]
                   (when-not (goog.object/containsKey new-attrs-keys k)
-                    (.removeAttribute node k)
+                    (if-let [prop-name (attr-as-prop k)]
+                      (aset node prop-name nil)
+                      (.removeAttribute node k))
                     (goog.object/remove prev-attrs k))))))
 
 (defn update-comp-elements

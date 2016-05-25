@@ -181,6 +181,7 @@
   (def cc (create-comp (template2 (list 1 2) nil)))
   (update-comp cc (template2 (list 1 3) #h [:div]) (.-firstChild (root)))
   (update-comp cc (template2 (list 4) {:class "c"}) (.-firstChild (root)))
+  (update-comp cc (template2 (list 4) {:class "e"}) (.-firstChild (root)))
   )
 
 #_(deftest test2
