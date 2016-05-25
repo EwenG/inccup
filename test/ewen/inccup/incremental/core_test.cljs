@@ -149,7 +149,7 @@
 
   (-> (create-comp (def3 "e"))
       (update-comp (def3 "f") (.-firstChild (root)))
-      #_(update-comp (def3 "g") (.-firstChild (root))))
+      (update-comp (def3 {:id "i"}) (.-firstChild (root))))
 
   (.appendChild (new-root) (goog.dom/htmlToDocumentFragment "<div>ee dd ff
 
