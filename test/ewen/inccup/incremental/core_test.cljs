@@ -133,6 +133,10 @@
 (defn def2 [x y z] #h [x y z])
 (defn def3 [x] #h [:div#ii.cc x])
 
+(-> (create-comp (def1 "e" "ggg rze dd"))
+    (update-comp (def1 "e" #h [:p]) (.-firstChild (root)))
+    (update-comp (def1 "es" "t") (.-firstChild (root))))
+
 (comment
   (-> (create-comp (def1 "e"))
       (update-comp (def1 "f") (.-firstChild (root)))

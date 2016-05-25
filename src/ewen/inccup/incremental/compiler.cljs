@@ -425,8 +425,28 @@
         (recur (inc index))))
     arr))
 
+(defn delete-text-node [parent node]
+  (if (and node
+           (= (.-nodeType node) 8)
+           (= (.-nodeValue node) "inccup/text-start"))
+    (loop [node node
+           end-reached false]
+      (if (or (nil? node) end-reached)
+        node
+        (let [next-node (next-sibling node)]
+          (.removeChild parent node)
+          (recur next-node
+                 (and (= (.-nodeType node) 8)
+                      (= (.-nodeValue node) "inccup/text-end"))))))
+    node))
+
 (defn delete-prev-element [parent node prev-element]
   (cond
+    (instance? Component prev-element)
+    (when node
+      (let [next-node (next-sibling node)]
+        (.removeChild parent node)
+        next-node))
     (nil? prev-element) node
     (inccup-seq? prev-element)
     (loop [node node
@@ -435,11 +455,8 @@
         (recur (delete-prev-element parent node e)
                (inc index))
         node))
-    :else ;; Text node or component
-    (when node
-      (let [next-node (next-sibling node)]
-        (.removeChild parent node)
-        next-node))))
+    :else ;; Text node
+    (delete-text-node parent node)))
 
 (declare create-comp*)
 (declare update-comp*)
@@ -461,6 +478,51 @@
         (.pop x)
         (recur (inc index))))
     next-node))
+
+(defn create-text-node [parent next-node data]
+  (.insertBefore
+   parent (.createComment js/document "inccup/text-start") next-node)
+  (.insertBefore
+   parent (.createTextNode js/document data) next-node)
+  (.insertBefore
+   parent (.createComment js/document "inccup/text-end") next-node)
+  next-node)
+
+(defn skip-text-node [node]
+  ;; if node is a comment node representing the start of a text node
+  (if (and node
+           (= (.-nodeType node) 8)
+           (= (.-nodeValue node) "inccup/text-start"))
+    (loop [node (.-nextSibling node)]
+      (if (or (nil? node)
+              (and (= (.-nodeType node) 8)
+                   (= (.-nodeValue node) "inccup/text-end")))
+        (next-sibling node)
+        (recur (.-nextSibling node))))
+    node))
+
+(defn set-text-node [parent node data]
+  (if (or (nil? node)
+          (not= (.-nodeType node) 8)
+          (not= (.-nodeValue node) "inccup/text-start"))
+    (create-text-node parent node data)
+    (loop [node (.-nextSibling node)
+           text-set false]
+      (cond (or (nil? node)
+                (and (= (.-nodeType node) 8)
+                     (= (.-nodeValue node) "inccup/text-end")))
+            (do (when-not text-set
+                  (.insertBefore
+                   parent (.createTextNode js/document data) node))
+                (next-sibling node))
+            ;; a text node
+            (and (= (.-nodeType node) 3) (not text-set))
+            (do (aset node "nodeValue" data)
+                (recur (.-nextSibling node) true))
+            :else
+            (let [next-node (.-nextSibling node)]
+              (.removeChild parent node)
+              (recur next-node text-set))))))
 
 (defn diff-children
   [parent node prev-element element prev-forms index]
@@ -502,16 +564,14 @@
       (aset prev-forms index nil)
       (delete-prev-element parent node prev-element))
     :else
-    (if (or (instance? Component prev-element)
-            (inccup-seq? prev-element)
-            (nil? prev-element)
-            (not= prev-element (str element)))
+    (if (string? prev-element)
+      (if (= prev-element (str element))
+        (skip-text-node node)
+        (set-text-node parent node (str element)))
       (do
         (aset prev-forms index (str element))
-        (.insertBefore
-         parent (goog.dom/createTextNode (str element)) node)
-        (delete-prev-element parent node prev-element))
-      (next-sibling node))))
+        (create-text-node parent node (str element))
+        (delete-prev-element parent node prev-element)))))
 
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
