@@ -11,7 +11,11 @@
   (goog.object/set o k v)
   v)
 
-(def oget goog.object/get)
+(defn oget
+  ([o k]
+   (goog.object/get o k nil))
+  ([o k v]
+   (goog.object/get o k (or v nil))))
 
 (defn array-with-path [path arr]
   (oset arr "inccup/update-paths" path)
@@ -325,7 +329,8 @@
       true)))
 
 (deftype Component [id max-level static params var-deps
-                    ^:mutable key ^:mutable level ^:mutable forms]
+                    ^:mutable key ^:mutable level
+                    ^:mutable forms]
   IDeref
   (-deref [_] forms)
   IComponent
@@ -386,26 +391,14 @@
     (.appendChild parent new-node))
   new-node)
 
-(defn get-or-set-global [id k v]
-  (if *globals*
-    (if-let [comp-globals (oget *globals* id)]
-      (or (oget comp-globals k)
-          (oset comp-globals k v))
-      (do
-        (oset *globals* id (js-obj k v "count" 0))
-        v))
-    v))
+(defn maybe-set-global [id k1 v1 k2 v2]
+  (when-not (oget *globals* id)
+    (oset *globals* id (js-obj "count" 0 k1 v1 k2 v2))))
 
-(defn inc-comp-global [id]
+(defn swap-count-global [id inc-dec]
   (when *globals*
     (when-let [comp-globals (oget *globals* id)]
-      (->> (oget comp-globals "count") inc
-           (oset comp-globals "count")))))
-
-(defn dec-comp-global [id]
-  (when *globals*
-    (when-let [comp-globals (oget *globals* id)]
-      (->> (oget comp-globals "count") dec
+      (->> (oget comp-globals "count") inc-dec
            (oset comp-globals "count")))))
 
 (defn clean-globals []
@@ -732,11 +725,14 @@
         (next-sibling node)))))
 
 (defn create-comp* [comp]
+  (maybe-set-global (.-id comp)
+                    "static" (.-static$ comp)
+                    "var-deps" (.-var-deps comp))
   (let [var-deps-arr (-> (.-var-deps comp) count make-true-arr)
         forms ((.-forms comp) var-deps-arr)]
     (set! (.-forms comp) forms)
     (oset comp "inccup/var-deps-arr" var-deps-arr)
-    (inc-comp-global (.-id comp))
+    (swap-count-global (.-id comp) inc)
     (create-comp-elements (.-static$ comp) forms)))
 
 (defn update-comp* [prev-comp comp parent node]

@@ -435,15 +435,21 @@
         id (swap! component-id inc)]
     `(ewen.inccup.incremental.compiler/->Component
       ~id 1
-      (ewen.inccup.incremental.compiler/get-or-set-global
-       ~id "static" ~static)
+      (cljs.core/or
+       (goog.object/get
+        (goog.object/get
+         ewen.inccup.incremental.compiler/*globals* ~id nil) "static")
+       ~static)
       #_(ewen.inccup.incremental.compiler/get-or-set-global
        ~id "update-path" ~update-path)
       ~(coll->js-array (keys tracked-vars))
-      (ewen.inccup.incremental.compiler/get-or-set-global
-       ~id "var-deps" ~(->> dynamic (map :var-deps)
-                            (map var-deps->indexes)
-                            coll->js-array))
+      (cljs.core/or
+       (goog.object/get
+        (goog.object/get
+         ewen.inccup.incremental.compiler/*globals* ~id nil) "var-deps")
+       ~(->> dynamic (map :var-deps)
+             (map var-deps->indexes)
+             coll->js-array))
       nil 1
       ~(let [var-deps-sym (gensym "var-deps")]
          `(fn [~var-deps-sym]
