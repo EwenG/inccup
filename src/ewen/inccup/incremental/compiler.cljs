@@ -7,8 +7,14 @@
 (def ^:dynamic *tmp-val* nil)
 (def ^:dynamic *globals* nil)
 
+(defn oset [o k v]
+  (goog.object/set o k v)
+  v)
+
+(def oget goog.object/get)
+
 (defn array-with-path [path arr]
-  (aset arr "inccup/update-paths" path)
+  (oset arr "inccup/update-paths" path)
   arr)
 
 (defn maybe-merge-attributes [tag-attrs expr]
@@ -30,12 +36,12 @@
 (declare walk-children-comps)
 
 (defn init-keymap [comp max-level]
-  (loop [keymap (aset comp "inccup/keymap" (js-obj))
-         removed-keys (aset comp "inccup/removed-keys" (js-obj))
+  (loop [keymap (oset comp "inccup/keymap" (js-obj))
+         removed-keys (oset comp "inccup/removed-keys" (js-obj))
          i 1]
     (when (<= i max-level)
-      (aset keymap i (js-obj))
-      (aset removed-keys i (js-obj))
+      (oset keymap i (js-obj))
+      (oset removed-keys i (js-obj))
       (recur keymap removed-keys (inc i)))))
 
 (defn update-parent-comps [parent-comps comp max-level]
@@ -60,34 +66,34 @@
   (let [parents (aget parent-comps 0)
         index (aget parent-comps 1)
         keymap (-> (aget parents index)
-                   (aget "inccup/keymap")
-                   (aget (.-level comp)))]
-    (aset keymap (.-key comp) comp)))
+                   (oget "inccup/keymap")
+                   (oget (.-level comp)))]
+    (oset keymap (.-key comp) comp)))
 
 (defn remove-comp-key [parent-comps comp]
   (let [parents (aget parent-comps 0)
         index (aget parent-comps 1)
         removed-keys (-> (aget parents index)
-                         (aget "inccup/removed-keys")
-                         (aget (.-level comp)))]
-    (aset removed-keys (.-key comp) nil)))
+                         (oget "inccup/removed-keys")
+                         (oget (.-level comp)))]
+    (oset removed-keys (.-key comp) nil)))
 
 (defn update-key-on-move [parent-comps comp]
   (let [parents (aget parent-comps 0)
         index (aget parent-comps 1)
         removed-keys (-> (aget parents index)
-                         (aget "inccup/removed-keys")
-                         (aget (.-level comp)))]
+                         (oget "inccup/removed-keys")
+                         (oget (.-level comp)))]
     (goog.object/remove removed-keys (.-key comp))))
 
 (defn clean-comp-keys [comp max-level]
-  (let [keymap (aget comp "inccup/keymap")
-        removed-keys (aget comp "inccup/removed-keys")]
+  (let [keymap (oget comp "inccup/keymap")
+        removed-keys (oget comp "inccup/removed-keys")]
     (loop [max-level max-level
            i 1]
       (when (<= i max-level)
-        (let [keymap (aget keymap i)
-              removed-keys (aget removed-keys i)]
+        (let [keymap (oget keymap i)
+              removed-keys (oget removed-keys i)]
           (goog.object/forEach
            removed-keys (fn [_ k _]
                           (goog.object/remove removed-keys k)
@@ -95,7 +101,7 @@
         (recur max-level (inc i))))))
 
 (defn inccup-seq? [x]
-  (and (array? x) (aget x "inccup/seq")))
+  (and (array? x) (oget x "inccup/seq")))
 
 #_(defn pop-inccup-seq-from
   [x index parent-comps remove-element unmount-comp]
@@ -129,9 +135,9 @@
                          mount-comp unmount-comp]
   (aset element index
         (doto #js []
-          (aset "inccup/seq" true)
-          (aset "inccup/seq-parent" element)
-          (aset "inccup/seq-index" index)))
+          (oset "inccup/seq" true)
+          (oset "inccup/seq-parent" element)
+          (oset "inccup/seq-index" index)))
   (loop [inccup-seq (aget element index)
          form form
          index 0]
@@ -162,7 +168,7 @@
 
 #_(defn walk-children-comps [comp comp-fn direction]
   (loop [parent (.-value comp)
-         update-path (aget parent "inccup/update-path")
+         update-path (oget parent "inccup/update-path")
          index 0
          l (count update-path)]
     (when (< index l)
@@ -218,9 +224,9 @@
                                  mount-comp unmount-comp))
                   (if-let [moved-comp (->
                                        (parent-comp parent-comps level)
-                                       (aget "inccup/keymap")
-                                       (aget level)
-                                       (aget key))]
+                                       (oget "inccup/keymap")
+                                       (oget level)
+                                       (oget key))]
                     (do
                       (assert (= (.-id prev-form) (.-id form)))
                       (update-key-on-move parent-comps moved-comp)
@@ -349,13 +355,13 @@
         ;;IE
         (if (and
              (not goog.dom.BrowserFeature.CAN_ADD_NAME_OR_TYPE_ATTRIBUTES)
-             (or (aget attrs "name")
-                 (aget attrs "type")))
+             (or (oget attrs "name")
+                 (oget attrs "type")))
           (let [tag-arr #js ["<" tag]]
-            (when-let [attr-name (aget attrs "name")]
+            (when-let [attr-name (oget attrs "name")]
               (.push
                tag-arr " name=\"" (goog.string/htmlEscape attr-name) "\""))
-            (when-let [attr-type (aget attrs "type")]
+            (when-let [attr-type (oget attrs "type")]
               (.push
                tag-arr " type=\"" (goog.string/htmlEscape attr-type) "\""))
             (.push tag-arr ">")
@@ -365,8 +371,8 @@
     (goog.object/forEach
      attrs (fn [v k o]
              (if-let [prop-name (attr-as-prop k)]
-               (aset element prop-name (aget attrs k))
-               (.setAttribute element k (aget attrs k)))))
+               (oset element prop-name (oget attrs k))
+               (.setAttribute element k (oget attrs k)))))
     (when children
       (loop [child (aget children 0)]
         (when child
@@ -382,31 +388,31 @@
 
 (defn get-or-set-global [id k v]
   (if *globals*
-    (if-let [comp-globals (aget *globals* id)]
-      (or (aget comp-globals k)
-          (aset comp-globals k v))
+    (if-let [comp-globals (oget *globals* id)]
+      (or (oget comp-globals k)
+          (oset comp-globals k v))
       (do
-        (aset *globals* id (js-obj k v "count" 0))
+        (oset *globals* id (js-obj k v "count" 0))
         v))
     v))
 
 (defn inc-comp-global [id]
   (when *globals*
-    (when-let [comp-globals (aget *globals* id)]
-      (->> (aget comp-globals "count") inc
-           (aset comp-globals "count")))))
+    (when-let [comp-globals (oget *globals* id)]
+      (->> (oget comp-globals "count") inc
+           (oset comp-globals "count")))))
 
 (defn dec-comp-global [id]
   (when *globals*
-    (when-let [comp-globals (aget *globals* id)]
-      (->> (aget comp-globals "count") dec
-           (aset comp-globals "count")))))
+    (when-let [comp-globals (oget *globals* id)]
+      (->> (oget comp-globals "count") dec
+           (oset comp-globals "count")))))
 
 (defn clean-globals []
   (when *globals*
     (goog.object/forEach
      *globals* (fn [v k o]
-                 (when (= 0 (aget v "count"))
+                 (when (= 0 (oget v "count"))
                    (goog.object/remove o k))))))
 
 (defn make-var-deps-arr [arr params prev-params var-deps]
@@ -462,7 +468,7 @@
 (declare update-comp*)
 
 (defn inccup-seq []
-  (doto #js [] (aset "inccup/seq" true)))
+  (doto #js [] (oset "inccup/seq" true)))
 
 (defn pop-inccup-seq-from [parent node x index]
   (let [l (count x)
@@ -517,7 +523,7 @@
                 (next-sibling node))
             ;; a text node
             (and (= (.-nodeType node) 3) (not text-set))
-            (do (aset node "nodeValue" data)
+            (do (oset node "nodeValue" data)
                 (recur (.-nextSibling node) true))
             :else
             (let [next-node (.-nextSibling node)]
@@ -643,18 +649,18 @@
   (let [new-attrs-keys (js-obj)]
     (goog.object/forEach
      attrs (fn [v k _]
-             (let [prev-v (aget prev-attrs k)]
-               (aset new-attrs-keys k nil)
+             (let [prev-v (oget prev-attrs k)]
+               (oset new-attrs-keys k nil)
                (when (not= prev-v v)
                  (if-let [prop-name (attr-as-prop k)]
-                   (aset node prop-name v)
+                   (oset node prop-name v)
                    (.setAttribute node k v))
-                 (aset prev-attrs k v)))))
+                 (oset prev-attrs k v)))))
     (goog.object/forEach
      prev-attrs (fn [v k _]
                   (when-not (goog.object/containsKey new-attrs-keys k)
                     (if-let [prop-name (attr-as-prop k)]
-                      (aset node prop-name nil)
+                      (oset node prop-name nil)
                       (.removeAttribute node k))
                     (goog.object/remove prev-attrs k))))))
 
@@ -679,7 +685,7 @@
     (string? static)
     (next-sibling node)
     :else
-    (let [update-paths (aget static "inccup/update-paths")]
+    (let [update-paths (oget static "inccup/update-paths")]
       (if (keep-walking-path? update-paths var-deps-arr)
         (let [tag (first static)
               prev-tag (if (number? tag) (aget prev-forms tag) tag)
@@ -729,7 +735,7 @@
   (let [var-deps-arr (-> (.-var-deps comp) count make-true-arr)
         forms ((.-forms comp) var-deps-arr)]
     (set! (.-forms comp) forms)
-    (aset comp "inccup/var-deps-arr" var-deps-arr)
+    (oset comp "inccup/var-deps-arr" var-deps-arr)
     (inc-comp-global (.-id comp))
     (create-comp-elements (.-static$ comp) forms)))
 
@@ -737,7 +743,7 @@
   (let [params (.-params comp)
         prev-params (.-params prev-comp)
         prev-forms (.-forms prev-comp)
-        var-deps-arr (aget prev-comp "inccup/var-deps-arr")
+        var-deps-arr (oget prev-comp "inccup/var-deps-arr")
         var-deps-arr (->> (.-var-deps comp)
                           (make-var-deps-arr
                            var-deps-arr params prev-params))
@@ -746,12 +752,12 @@
                           var-deps-arr prev-forms forms)))
 
 (defn create-comp [comp node]
-  (binding [*globals* (aset comp "inccup/globals" #js{})]
+  (binding [*globals* (oset comp "inccup/globals" #js{})]
     (.appendChild node (create-comp* comp))
     comp))
 
 (defn update-comp [prev-comp comp node]
-  (binding [*globals* (aget prev-comp "inccup/globals")]
+  (binding [*globals* (oget prev-comp "inccup/globals")]
     (assert (not (nil? *globals*)))
     (assert (= (.-id comp) (.-id prev-comp)))
     (update-comp* prev-comp comp (.-parentNode node) node)
