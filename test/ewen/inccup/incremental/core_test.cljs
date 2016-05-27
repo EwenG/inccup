@@ -2,7 +2,7 @@
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [with-key]]
             [ewen.inccup.incremental.compiler :as comp
-             :refer [Component update-comp]]
+             :refer [Component render! update!]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array]
             [goog.dom])
@@ -123,9 +123,6 @@
       (goog.dom/appendChild (.-body js/document) new-root))
     new-root))
 
-(defn create-comp [c]
-  (comp/create-comp c (new-root)))
-
 (defn root []
   (.querySelector js/document "#root"))
 
@@ -134,26 +131,19 @@
 (defn def3 [x] #h [:div#ii.cc x])
 
 (comment
-  (-> (create-comp (def1 "e"))
-      (update-comp (def1 "f") (.-firstChild (root)))
-      (update-comp (def1 "g") (.-firstChild (root))))
+  (-> (render! (new-root) def1 "e")
+      (update! def1 "f")
+      (update! def1 "g"))
 
-  (def cc (create-comp (def2 :p {:e "e"} "t")))
-  (update-comp cc
-               (def2 :p {:class "c2"} "t")
-               (.-firstChild (root)))
+  (def cc (render! (new-root) def2 :p {:e "e"} "t"))
+  (update! cc def2 :p {:class "c2"} "t")
 
-  (-> (create-comp (def2 :p {:class "c"} "t"))
-      (update-comp (def2 :p {:class "c2" :e "e"} "t")
-                   (.-firstChild (root))))
+  (-> (render! (new-root) def2 :p {:class "c"} "t")
+      (update! def2 :p {:class "c2" :e "e"} "t"))
 
-  (-> (create-comp (def3 "e"))
-      (update-comp (def3 "f") (.-firstChild (root)))
-      (update-comp (def3 {:id "i"}) (.-firstChild (root))))
-
-  (.appendChild (new-root) (goog.dom/htmlToDocumentFragment "<div>ee dd ff
-
- gg   </div>"))
+  (-> (render! (new-root) def3 "e")
+      (update! def3 "f")
+      (update! def3 {:id "i"}))
   )
 
 #_(deftest test1
@@ -178,10 +168,10 @@
                           (for [y x] (template1 y))])
 
 (comment
-  (def cc (create-comp (template2 (list 1 2) nil)))
-  (update-comp cc (template2 (list 1 3) #h [:div]) (.-firstChild (root)))
-  (update-comp cc (template2 (list 4) {:class "c"}) (.-firstChild (root)))
-  (update-comp cc (template2 (list 4) {:class "e"}) (.-firstChild (root)))
+  (def cc (render! (new-root) template2 (list 1 2) nil))
+  (update! cc template2 (list 1 3) #h [:div])
+  (update! cc template2 (list 4) {:class "c"})
+  (update! cc template2 (list 4) {:class "e"})
   )
 
 #_(deftest test2

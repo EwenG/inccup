@@ -747,15 +747,22 @@
     (update-comp-elements parent node (.-static$ comp)
                           var-deps-arr prev-forms forms)))
 
-(defn create-comp [comp node]
-  (binding [*globals* (oset comp "inccup/globals" #js{})]
-    (.appendChild node (create-comp* comp))
-    comp))
+(defn render! [node comp-fn & params]
+  (binding [*globals* #js {}]
+    (let [comp (apply comp-fn params)
+          new-node (create-comp* comp)]
+      (oset comp "inccup/globals" *globals*)
+      (oset comp "inccup/node" new-node)
+      (goog.dom/removeChildren node)
+      (.appendChild node new-node)
+      comp)))
 
-(defn update-comp [prev-comp comp node]
+(defn update! [prev-comp comp-fn & params]
   (binding [*globals* (oget prev-comp "inccup/globals")]
     (assert (not (nil? *globals*)))
-    (assert (= (.-id comp) (.-id prev-comp)))
-    (update-comp* prev-comp comp (.-parentNode node) node)
-    (clean-globals)
-    prev-comp))
+    (let [comp (apply comp-fn params)
+          node (oget prev-comp "inccup/node")]
+      (assert (= (.-id comp) (.-id prev-comp)))
+      (update-comp* prev-comp comp (.-parentNode node) node)
+      (clean-globals)
+      prev-comp)))
