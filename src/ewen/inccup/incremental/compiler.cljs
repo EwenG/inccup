@@ -39,7 +39,7 @@
 
 (declare walk-children-comps)
 
-(defn init-keymap [comp max-level]
+#_(defn init-keymap [comp]
   (loop [keymap (oset comp "inccup/keymap" (js-obj))
          removed-keys (oset comp "inccup/removed-keys" (js-obj))
          i 1]
@@ -48,7 +48,7 @@
       (oset removed-keys i (js-obj))
       (recur keymap removed-keys (inc i)))))
 
-(defn update-parent-comps [parent-comps comp max-level]
+#_(defn update-parent-comps [parent-comps comp max-level]
   (if (nil? (aget parent-comps 0))
     (do
       (aset parent-comps 0 (doto (make-array max-level) (aset 0 comp)))
@@ -57,52 +57,44 @@
           new-index (inc (aget parent-comps 1))
           new-index (if (>= new-index (count parents)) 0 new-index)]
       (aset parents new-index comp)
-      (aset parents parent-comps new-index))))
+      (aset parent-comps 1 new-index))))
 
-(defn parent-comp [parent-comps level]
+#_(defn parent-comp [parent-comps level]
   (let [parents (aget parent-comps 0)
         index (aget parent-comps 1)
         index (- index (dec level))
         index (if (< index 0) (+ index (count parents)) index)]
     (aget parents index)))
 
-(defn register-comp-key [parent-comps comp]
-  (let [parents (aget parent-comps 0)
-        index (aget parent-comps 1)
-        keymap (-> (aget parents index)
-                   (oget "inccup/keymap")
-                   (oget (.-level comp)))]
-    (oset keymap (.-key comp) comp)))
+(defn walk-parent-comps [parent-comp level f key comp]
+  (loop [level level
+         parent-comp parent-comp]
+    (cond (nil? parent-comp)
+          nil
+          (> level 1)
+          (recur (dec level) (oget parent-comp "inccup/parent-comp"))
+          :else (f parent-comp key comp))))
 
-(defn remove-comp-key [parent-comps comp]
-  (let [parents (aget parent-comps 0)
-        index (aget parent-comps 1)
-        removed-keys (-> (aget parents index)
-                         (oget "inccup/removed-keys")
-                         (oget (.-level comp)))]
-    (oset removed-keys (.-key comp) nil)))
+(defn get-comp-by-key [parent-comp key comp]
+  (-> (oget parent-comp "inccup/keymap")
+      (oget key)))
 
-(defn update-key-on-move [parent-comps comp]
-  (let [parents (aget parent-comps 0)
-        index (aget parent-comps 1)
-        removed-keys (-> (aget parents index)
-                         (oget "inccup/removed-keys")
-                         (oget (.-level comp)))]
-    (goog.object/remove removed-keys (.-key comp))))
+(defn register-comp-key [parent-comp key comp]
+  (oset (oget parent-comp "inccup/keymap") key comp))
 
-(defn clean-comp-keys [comp max-level]
+(defn remove-comp-key [parent-comp key comp]
+  (oset (oget parent-comp "inccup/removed-keys") key comp))
+
+(defn update-key-on-move [parent-comp key comp]
+  (goog.object/remove (oget parent-comp "inccup/removed-keys") key))
+
+(defn clean-comp-keys [comp]
   (let [keymap (oget comp "inccup/keymap")
         removed-keys (oget comp "inccup/removed-keys")]
-    (loop [max-level max-level
-           i 1]
-      (when (<= i max-level)
-        (let [keymap (oget keymap i)
-              removed-keys (oget removed-keys i)]
-          (goog.object/forEach
-           removed-keys (fn [_ k _]
-                          (goog.object/remove removed-keys k)
-                          (goog.object/remove keymap k))))
-        (recur max-level (inc i))))))
+    (goog.object/forEach
+     removed-keys (fn [_ k _]
+                    (goog.object/remove removed-keys k)
+                    (goog.object/remove keymap k)))))
 
 (defn inccup-seq? [x]
   (and (array? x) (oget x "inccup/seq")))
@@ -328,16 +320,10 @@
         false)
       true)))
 
-(deftype Component [id max-level static params var-deps
-                    ^:mutable key ^:mutable level
-                    ^:mutable forms]
+(deftype Component
+    [id max-level static params var-deps ^:mutable forms]
   IDeref
-  (-deref [_] forms)
-  IComponent
-  (set-key [c k l]
-    (set! key k)
-    (set! level l)
-    c))
+  (-deref [_] forms))
 
 (defn next-sibling [node]
   (when node (.-nextSibling node)))
@@ -439,19 +425,25 @@
                       (= (.-nodeValue node) "inccup/text-end"))))))
     node))
 
-(defn delete-prev-element [parent node prev-element]
+(defn delete-prev-element [parent node prev-element parent-comp]
   (cond
     (instance? Component prev-element)
-    (when node
-      (let [next-node (next-sibling node)]
-        (.removeChild parent node)
-        next-node))
+    (let [opts (oget prev-element "inccup/opts")
+          key (oget opts "key")
+          level (when key (oget opts "level"))]
+      (when key (walk-parent-comps
+                 parent-comp level remove-comp-key
+                 key prev-element))
+      (when node
+        (let [next-node (next-sibling node)]
+          (.removeChild parent node)
+          next-node)))
     (nil? prev-element) node
     (inccup-seq? prev-element)
     (loop [node node
            index 0]
       (if-let [e (aget prev-element index)]
-        (recur (delete-prev-element parent node e)
+        (recur (delete-prev-element parent node e parent-comp)
                (inc index))
         node))
     :else ;; Text node
@@ -463,13 +455,13 @@
 (defn inccup-seq []
   (doto #js [] (oset "inccup/seq" true)))
 
-(defn pop-inccup-seq-from [parent node x index]
+(defn pop-inccup-seq-from [parent node x index parent-comp]
   (let [l (count x)
         next-node (loop [node node
                          index index]
                     (if (< index l)
                       (recur (delete-prev-element
-                              parent node (aget x index))
+                              parent node (aget x index) parent-comp)
                              (inc index))
                       node))]
     (loop [index index]
@@ -524,16 +516,44 @@
               (recur next-node text-set))))))
 
 (defn diff-children
-  [parent node prev-element element prev-forms index]
+  [parent node prev-element element prev-forms index parent-comp]
   (cond
     (instance? Component element)
-    (if (and (instance? Component prev-element)
-             (= (.-id element) (.-id prev-element)))
-      (update-comp* prev-element element parent node)
-      (do
-        (aset prev-forms index element)
-        (.insertBefore parent (create-comp* element) node)
-        (delete-prev-element parent node prev-element)))
+    (let [opts (oget element "inccup/opts")
+          key (oget opts "key")
+          level (when key (oget opts "level"))]
+      (if key
+        (if (and (instance? Component prev-element)
+                 (= (-> (oget prev-element "inccup/opts")
+                        (oget "key")) key)
+                 (= (-> (oget prev-element "inccup/opts")
+                        (oget "level")) level))
+          (do
+            (assert (= (.-id prev-element) (.-id element)))
+            (update-comp* prev-element element parent node))
+          (if-let [moved-comp (walk-parent-comps
+                               parent-comp level get-comp-by-key
+                               key element)]
+            (let [moved-node (oget moved-comp "inccup/node")]
+              (assert (= (.-id moved-comp) (.-id element)))
+              (aset prev-forms index moved-comp)
+              (walk-parent-comps
+               parent-comp level update-key-on-move key element)
+              (.insertBefore parent moved-node node)
+              (update-comp* moved-comp element (.-parentNode node) node)
+              (delete-prev-element parent node prev-element parent-comp))
+            (do
+              (aset prev-forms index element)
+              (.insertBefore parent
+                             (create-comp* element parent-comp) node)
+              (delete-prev-element parent node prev-element parent-comp))))
+        (if (and (instance? Component prev-element)
+                 (= (.-id prev-element) (.-id element)))
+          (update-comp* prev-element element parent node)
+          (do
+            (aset prev-forms index element)
+            (.insertBefore parent (create-comp* element parent-comp) node)
+            (delete-prev-element parent node prev-element parent-comp)))))
     (seq? element)
     (if (inccup-seq? prev-element)
       (loop [node node
@@ -542,10 +562,11 @@
         (if-not (empty? elements)
           (let [e (first elements)
                 prev-e (aget prev-element i)]
-            (recur (diff-children parent node prev-e e prev-element i)
+            (recur (diff-children parent node prev-e e prev-element
+                                  i parent-comp)
                    (rest elements) (inc i)))
           (if (< i (count prev-element))
-            (pop-inccup-seq-from parent node prev-element i)
+            (pop-inccup-seq-from parent node prev-element i parent-comp)
             node)))
       (loop [node node
              elements element
@@ -553,15 +574,15 @@
              i 0]
         (if-not (empty? elements)
           (recur (diff-children parent node nil (first elements)
-                                inccup-seq i)
+                                inccup-seq i parent-comp)
                  (rest elements) inccup-seq (inc i))
           (do
             (aset prev-forms index inccup-seq)
-            (delete-prev-element parent node prev-element)))))
+            (delete-prev-element parent node prev-element parent-comp)))))
     (nil? element)
     (do
       (aset prev-forms index nil)
-      (delete-prev-element parent node prev-element))
+      (delete-prev-element parent node prev-element parent-comp))
     :else
     (if (string? prev-element)
       (if (= prev-element (str element))
@@ -570,12 +591,12 @@
       (do
         (aset prev-forms index (str element))
         (create-text-node parent node (str element))
-        (delete-prev-element parent node prev-element)))))
+        (delete-prev-element parent node prev-element parent-comp)))))
 
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
    Returns the created node"
-  [static forms]
+  [static forms parent-comp]
   (let [tag (if (number? (first static))
               (->> (first static) (aget forms) name
                    (aset forms (first static)))
@@ -594,11 +615,13 @@
               nil
               (number? child)
               (let [form (aget forms child)]
-                (diff-children new-node nil nil form forms child))
+                (diff-children new-node nil nil form forms child
+                               parent-comp))
               (string? child)
-              (diff-children new-node nil nil child forms child)
+              (diff-children new-node nil nil child forms child
+                             parent-comp)
               :else
-              (->> (create-comp-elements child forms)
+              (->> (create-comp-elements child forms parent-comp)
                    (.appendChild new-node))))
           (recur (inc index))))
       new-node)))
@@ -661,7 +684,7 @@
   "Walk a component. Updates dynamic parts of the component during the
   walk. `node` is the current node beeing walked. `parent` is its parent
   node. Returns the next sibling of `node`"
-  [parent node static var-deps-arr prev-forms forms]
+  [parent node static var-deps-arr prev-forms forms parent-comp]
   (cond
     (nil? static)
     node
@@ -671,7 +694,7 @@
     (let [prev-form (aget prev-forms static)]
       (if (aget var-deps-arr static)
         (diff-children parent node prev-form (aget forms static)
-                       prev-forms static)
+                       prev-forms static parent-comp)
         (cond (nil? prev-form) node
               (inccup-seq? prev-form) (walk-inccup-seq node prev-form)
               :else (next-sibling node))))
@@ -719,21 +742,34 @@
               (recur
                (update-comp-elements
                 maybe-new-node child (aget static index)
-                var-deps-arr prev-forms forms)
+                var-deps-arr prev-forms forms parent-comp)
                (inc index))))
           (next-sibling maybe-new-node))
         (next-sibling node)))))
 
-(defn create-comp* [comp]
+(defn create-comp* [comp parent-comp]
   (maybe-set-global (.-id comp)
                     "static" (.-static$ comp)
                     "var-deps" (.-var-deps comp))
-  (let [var-deps-arr (-> (.-var-deps comp) count make-true-arr)
-        forms ((.-forms comp) var-deps-arr)]
+  (let [opts (oget comp "inccup/opts")
+        key (oget opts "key")
+        level (when key (oget opts "level"))
+        var-deps-arr (-> (.-var-deps comp) count make-true-arr)
+        forms ((.-forms comp) var-deps-arr)
+        parent-comps []]
     (set! (.-forms comp) forms)
     (oset comp "inccup/var-deps-arr" var-deps-arr)
+    (oset comp "inccup/parent-comp" parent-comp)
+    (oset comp "inccup/keymap" (js-obj))
+    (oset comp "inccup/removed-keys" (js-obj))
+    (when key
+      (walk-parent-comps
+       parent-comp level register-comp-key
+       key comp))
     (swap-count-global (.-id comp) inc)
-    (create-comp-elements (.-static$ comp) forms)))
+    (let [new-node (create-comp-elements (.-static$ comp) forms comp)]
+      (when key (oset comp "inccup/node" new-node))
+      new-node)))
 
 (defn update-comp* [prev-comp comp parent node]
   (let [params (.-params comp)
@@ -743,14 +779,17 @@
         var-deps-arr (->> (.-var-deps comp)
                           (make-var-deps-arr
                            var-deps-arr params prev-params))
-        forms ((.-forms comp) var-deps-arr)]
-    (update-comp-elements parent node (.-static$ comp)
-                          var-deps-arr prev-forms forms)))
+        forms ((.-forms comp) var-deps-arr)
+        next-node (update-comp-elements parent node (.-static$ comp)
+                                        var-deps-arr prev-forms forms
+                                        comp)]
+    (clean-comp-keys comp)
+    next-node))
 
 (defn render! [node comp-fn & params]
   (binding [*globals* #js {}]
     (let [comp (apply comp-fn params)
-          new-node (create-comp* comp)]
+          new-node (create-comp* comp nil)]
       (oset comp "inccup/globals" *globals*)
       (oset comp "inccup/node" new-node)
       (goog.dom/removeChildren node)

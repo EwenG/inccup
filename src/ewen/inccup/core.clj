@@ -22,12 +22,18 @@
             "Invalid output format")
     [{:mode mode :output-format output-format} (first content)]))
 
-(defmacro with-key [key-level comp]
-  (if (map? key-level)
-    (let [{:keys [key level] :or {level 1}} key-level]
-      (assert (or (nil? level) (and (number? level) (> level 0))))
-      `(ewen.inccup.incremental.compiler/set-key ~comp ~key ~level))
-    `(ewen.inccup.incremental.compiler/set-key ~comp ~key-level 1)))
+(defn map->js-obj [m]
+  (loop [m m
+         data []]
+    (if-let [[k v] (first m)]
+      (let [v (if (map? v) (map->js-object v) v)]
+        (recur (rest m) (conj data (name k) v)))
+      `(cljs.core/js-obj ~@data))))
+
+(defmacro with-opts [{:keys [key level :or {level 1} :as opts]} comp]
+  (when level (assert (not (nil? key))))
+  (assert (or (nil? level) (and (number? level) (> level 0))))
+  `(goog.object/set ~comp "inccup/opts" (map->js-obj opts)))
 
 #_(defmacro html
   [& options-content]

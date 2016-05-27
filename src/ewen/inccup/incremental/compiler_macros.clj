@@ -450,7 +450,6 @@
        ~(->> dynamic (map :var-deps)
              (map var-deps->indexes)
              coll->js-array))
-      nil 1
       ~(let [var-deps-sym (gensym "var-deps")]
          `(fn [~var-deps-sym]
             (cljs.core/array
