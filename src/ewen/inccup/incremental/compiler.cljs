@@ -11,6 +11,10 @@
   (goog.object/set o k v)
   v)
 
+(defn oset* [o k v]
+  (goog.object/set o k v)
+  o)
+
 (defn oget
   ([o k]
    (goog.object/get o k nil))
@@ -540,7 +544,8 @@
               (walk-parent-comps
                parent-comp level update-key-on-move key element)
               (.insertBefore parent moved-node node)
-              (update-comp* moved-comp element (.-parentNode node) node)
+              (update-comp* moved-comp element
+                            (.-parentNode moved-node) node)
               (delete-prev-element parent node prev-element parent-comp))
             (do
               (aset prev-forms index element)
@@ -782,8 +787,8 @@
         forms ((.-forms comp) var-deps-arr)
         next-node (update-comp-elements parent node (.-static$ comp)
                                         var-deps-arr prev-forms forms
-                                        comp)]
-    (clean-comp-keys comp)
+                                        prev-comp)]
+    (clean-comp-keys prev-comp)
     next-node))
 
 (defn render! [node comp-fn & params]

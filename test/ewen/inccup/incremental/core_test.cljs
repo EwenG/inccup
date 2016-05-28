@@ -1,6 +1,6 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
-            [ewen.inccup.core :refer-macros [with-key]]
+            [ewen.inccup.core :refer-macros [with-opts]]
             [ewen.inccup.incremental.compiler :as comp
              :refer [Component render! update!]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
@@ -216,9 +216,16 @@
                      #js ["p" #js {:id "ii", :class "cc ", :e ""}
                           nil "4"]]])))))
 
-#_(defn template3 [x] #h [:p {:class x} nil x])
-#_(defn template4 [x] #h [:p {} (for [y x]
-                                (with-key y (template3 (inc y))))])
+(defn template3 [x] #h [:p {:class x} nil x])
+(defn template4 [x] #h [:p {}
+                        (for [y x]
+                          (with-opts {:key y}
+                            (template3 (inc y))))])
+
+(comment
+  (def cc (render! (new-root) template4 (list 1 2)))
+  (update! cc template4 (list 2 1))
+  )
 
 #_(deftest keyedChildren
   (testing "keyed children"

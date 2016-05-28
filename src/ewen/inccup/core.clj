@@ -26,14 +26,15 @@
   (loop [m m
          data []]
     (if-let [[k v] (first m)]
-      (let [v (if (map? v) (map->js-object v) v)]
+      (let [v (if (map? v) (map->js-obj v) v)]
         (recur (rest m) (conj data (name k) v)))
       `(cljs.core/js-obj ~@data))))
 
-(defmacro with-opts [{:keys [key level :or {level 1} :as opts]} comp]
+(defmacro with-opts [{:keys [key level] :or {level 1} :as opts} comp]
   (when level (assert (not (nil? key))))
   (assert (or (nil? level) (and (number? level) (> level 0))))
-  `(goog.object/set ~comp "inccup/opts" (map->js-obj opts)))
+  `(ewen.inccup.incremental.compiler/oset*
+    ~comp "inccup/opts" ~(map->js-obj opts)))
 
 #_(defmacro html
   [& options-content]
