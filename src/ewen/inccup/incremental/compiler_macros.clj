@@ -166,7 +166,9 @@
   element-compile-strategy)
 
 (defmethod compile-element ::all-literal
-  [element path] element)
+  [element path]
+  (let [[tag attrs content] (util/normalize-element element)]
+    (into [tag attrs] content)))
 
 (defmethod compile-element ::literal-tag-and-literal-attributes
   [[tag attrs & content] path]
