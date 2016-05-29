@@ -1,7 +1,7 @@
 (ns ewen.inccup.core
-  (:require [ewen.inccup.string.compiler-macros
+  (:require [ewen.inccup.string.compiler
              :refer [compile-html maybe-convert-raw-string]]
-            [ewen.inccup.incremental.compiler-macros]
+            [ewen.inccup.incremental.compiler]
             [ewen.inccup.util
              :refer [default-output-format name-with-attributes cljs-env?
                      *html-mode* *output-format*]]))
@@ -33,7 +33,7 @@
 (defmacro with-opts [{:keys [key level] :or {level 1} :as opts} comp]
   (when level (assert (not (nil? key))))
   (assert (or (nil? level) (and (number? level) (> level 0))))
-  `(ewen.inccup.incremental.compiler/set-opts ~comp ~(map->js-obj opts)))
+  `(ewen.inccup.incremental.vdom/set-opts ~comp ~(map->js-obj opts)))
 
 #_(defmacro html
   [& options-content]

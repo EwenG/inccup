@@ -1,3 +1,3 @@
 (ns ewen.inccup.core
-  (:require ewen.inccup.string.compiler
-            ewen.inccup.incremental.compiler))
+  (:require ewen.inccup.string.runtime
+            ewen.inccup.incremental.vdom))

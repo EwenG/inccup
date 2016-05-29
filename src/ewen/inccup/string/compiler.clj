@@ -1,15 +1,15 @@
-(ns ewen.inccup.string.compiler-macros
+(ns ewen.inccup.string.compiler
   "Internal functions for compilation."
   (:require [ewen.inccup.util :refer :all]
-            [ewen.inccup.string.compiler :as comp]))
+            [ewen.inccup.string.runtime :as runtime]))
 
 (defn compile-attr-map
   "Returns an unevaluated form that will render the supplied map as HTML
   attributes."
   [attrs]
   (if (some unevaluated? (mapcat identity attrs))
-    `(comp/render-attr-map ~attrs)
-    (comp/render-attr-map attrs)))
+    `(runtime/render-attr-map ~attrs)
+    (runtime/render-attr-map attrs)))
 
 (defn- form-name
   "Get the name of the supplied form."
@@ -34,7 +34,7 @@
 
 (defmethod compile-form :default
   [expr]
-  `(comp/render-html ~expr))
+  `(runtime/render-html ~expr))
 
 (defn- not-hint?
   "True if x is not hinted to be the supplied type."
@@ -87,16 +87,16 @@
 
 (defmethod compile-element ::all-literal
   [element]
-  (#'comp/render-element (eval element)))
+  (#'runtime/render-element (eval element)))
 
 (defmethod compile-element ::literal-tag-and-attributes
   [[tag attrs & content]]
-  (let [[tag attrs _] (comp/normalize-element [tag attrs])]
-    (if (#'comp/container-tag? tag content)
+  (let [[tag attrs _] (runtime/normalize-element [tag attrs])]
+    (if (#'runtime/container-tag? tag content)
       `(str ~(str "<" tag) ~(compile-attr-map attrs) ">"
             ~@(compile-seq content)
             ~(str "</" tag ">"))
-      `(str "<" ~tag ~(compile-attr-map attrs) ~(#'comp/end-tag)))))
+      `(str "<" ~tag ~(compile-attr-map attrs) ~(#'runtime/end-tag)))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content]]
@@ -104,28 +104,29 @@
 
 (defmethod compile-element ::literal-tag
   [[tag attrs & content]]
-  (let [[tag tag-attrs _] (comp/normalize-element [tag])
+  (let [[tag tag-attrs _] (runtime/normalize-element [tag])
         attrs-sym         (gensym "attrs")]
     `(let [~attrs-sym ~attrs]
        (if (map? ~attrs-sym)
-         ~(if (#'comp/container-tag? tag content)
+         ~(if (#'runtime/container-tag? tag content)
             `(str ~(str "<" tag)
-                  (comp/render-attr-map (merge ~tag-attrs ~attrs-sym)) ">"
+                  (runtime/render-attr-map
+                   (merge ~tag-attrs ~attrs-sym)) ">"
                   ~@(compile-seq content)
                   ~(str "</" tag ">"))
             `(str ~(str "<" tag)
-                  (comp/render-attr-map (merge ~tag-attrs ~attrs-sym))
-                  ~(#'comp/end-tag)))
-         ~(if (#'comp/container-tag? tag attrs)
-            `(str ~(str "<" tag (comp/render-attr-map tag-attrs) ">")
+                  (runtime/render-attr-map (merge ~tag-attrs ~attrs-sym))
+                  ~(#'runtime/end-tag)))
+         ~(if (#'runtime/container-tag? tag attrs)
+            `(str ~(str "<" tag (runtime/render-attr-map tag-attrs) ">")
                   ~@(compile-seq (cons attrs-sym content))
                   ~(str "</" tag ">"))
-            (str "<" tag (comp/render-attr-map tag-attrs)
-                 (#'comp/end-tag)))))))
+            (str "<" tag (runtime/render-attr-map tag-attrs)
+                 (#'runtime/end-tag)))))))
 
 (defmethod compile-element :default
   [element]
-  `(comp/render-element
+  `(runtime/render-element
      [~(first element)
       ~@(for [x (rest element)]
           (if (vector? x)
@@ -145,7 +146,7 @@
              (hint? expr String) `(escape-html ~expr)
              (hint? expr Number) expr
              (seq? expr) (compile-form expr)
-             :else `(comp/render-html ~expr)))))
+             :else `(runtime/render-html ~expr)))))
 
 (defn- collapse-strs
   "Collapse nested str expressions into one, where possible."

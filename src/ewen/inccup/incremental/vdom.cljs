@@ -1,4 +1,4 @@
-(ns ewen.inccup.incremental.compiler
+(ns ewen.inccup.incremental.vdom
   (:require [clojure.string :as str]
             [ewen.inccup.util :as util]
             [goog.object]
@@ -28,7 +28,8 @@
     (let [new-o (goog.object/clone o)]
       (merge-opts (oget opts "inccup/opts") new-opts)
       new-o)
-    (oset o "inccup/opts" new-opts)))
+    (do (oset o "inccup/opts" new-opts)
+        o)))
 
 (defn array-with-path [path arr]
   (oset arr "inccup/update-paths" path)

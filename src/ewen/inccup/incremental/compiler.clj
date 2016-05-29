@@ -1,4 +1,4 @@
-(ns ewen.inccup.incremental.compiler-macros
+(ns ewen.inccup.incremental.compiler
   (:require [ewen.inccup.incremental.emitter :as emitter]
             [ewen.inccup.util :as util]
             [cljs.analyzer.api :as ana-api]
@@ -49,11 +49,11 @@
    (when attrs
      (let [[expr used-vars] (track-vars attrs)
            attr-form
-           `(ewen.inccup.incremental.compiler/maybe-merge-attributes
+           `(ewen.inccup.incremental.vdom/maybe-merge-attributes
              ~tag-attrs ~expr)
-           form `(if (map? ewen.inccup.incremental.compiler/*tmp-val*)
+           form `(if (map? ewen.inccup.incremental.vdom/*tmp-val*)
                    nil
-                   ewen.inccup.incremental.compiler/*tmp-val*)]
+                   ewen.inccup.incremental.vdom/*tmp-val*)]
        (update-dynamic-forms attr-form attr-path used-vars)
        (update-dynamic-forms form path used-vars)
        nil))))
@@ -114,7 +114,7 @@
     (let [update-paths (-> x meta :update-paths)
           [tag attrs & content] x]
       (if update-paths
-        `(ewen.inccup.incremental.compiler/array-with-path
+        `(ewen.inccup.incremental.vdom/array-with-path
           ~(coll->js-array update-paths)
           (cljs.core/array ~(literal->js tag)
                            ~(literal->js attrs)
@@ -336,7 +336,7 @@
 (defn dynamic-form->update-path [{:keys [path indexes sub-forms]}]
   (let [indexes (-> indexes coll->js-array)
         sub-paths (map dynamic-form->update-path sub-forms)]
-    `(ewen.inccup.incremental.compiler/array-with-path
+    `(ewen.inccup.incremental.vdom/array-with-path
       ~indexes (cljs.core/array ~@path ~@sub-paths))))
 
 (comment
@@ -364,7 +364,7 @@
                        (apply union)
                        coll->js-array)
           update-paths (map dynamic-form->update-path forms)]
-      `(ewen.inccup.incremental.compiler/array-with-path
+      `(ewen.inccup.incremental.vdom/array-with-path
         ~indexes
         (cljs.core/array ~@update-paths)))))
 
@@ -435,20 +435,20 @@
                         dynamic-forms->update-path)
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         id (swap! component-id inc)]
-    `(ewen.inccup.incremental.compiler/->Component
+    `(ewen.inccup.incremental.vdom/->Component
       ~id 1
       (cljs.core/or
        (goog.object/get
         (goog.object/get
-         ewen.inccup.incremental.compiler/*globals* ~id nil) "static")
+         ewen.inccup.incremental.vdom/*globals* ~id nil) "static")
        ~static)
-      #_(ewen.inccup.incremental.compiler/get-or-set-global
+      #_(ewen.inccup.incremental.vdom/get-or-set-global
        ~id "update-path" ~update-path)
       ~(coll->js-array (keys tracked-vars))
       (cljs.core/or
        (goog.object/get
         (goog.object/get
-         ewen.inccup.incremental.compiler/*globals* ~id nil) "var-deps")
+         ewen.inccup.incremental.vdom/*globals* ~id nil) "var-deps")
        ~(->> dynamic (map :var-deps)
              (map var-deps->indexes)
              coll->js-array))

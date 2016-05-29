@@ -1,7 +1,7 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.core :refer-macros [with-opts]]
-            [ewen.inccup.incremental.compiler :as comp
+            [ewen.inccup.incremental.vdom :as vdom
              :refer [Component render! update!]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array]

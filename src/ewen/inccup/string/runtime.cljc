@@ -1,4 +1,4 @@
-(ns ewen.inccup.string.compiler
+(ns ewen.inccup.string.runtime
   (:require [hiccup.util :refer [*html-mode* as-str escape-html
                                  #?(:cljs RawString)]]
             [clojure.string :as str])
