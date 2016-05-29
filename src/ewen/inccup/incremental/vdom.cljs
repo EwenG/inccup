@@ -46,9 +46,6 @@
     (recur (aget arr (aget path index)) path count (inc index))
     arr))
 
-(defprotocol IComponent
-  (set-key [c key level]))
-
 (declare Component)
 
 (declare walk-children-comps)
@@ -335,7 +332,7 @@
       true)))
 
 (deftype Component
-    [id max-level static params var-deps ^:mutable forms]
+    [id static params var-deps ^:mutable forms]
   IDeref
   (-deref [_] forms))
 

@@ -436,7 +436,7 @@
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         id (swap! component-id inc)]
     `(ewen.inccup.incremental.vdom/->Component
-      ~id 1
+      ~id
       (cljs.core/or
        (goog.object/get
         (goog.object/get
