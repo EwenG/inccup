@@ -1,4 +1,4 @@
-(ns ewen.inccup.core
+(ns ewen.inccup.api
   (:require [ewen.inccup.string.compiler
              :refer [compile-html maybe-convert-raw-string]]
             [ewen.inccup.incremental.compiler]
