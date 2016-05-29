@@ -33,8 +33,7 @@
 (defmacro with-opts [{:keys [key level] :or {level 1} :as opts} comp]
   (when level (assert (not (nil? key))))
   (assert (or (nil? level) (and (number? level) (> level 0))))
-  `(ewen.inccup.incremental.compiler/oset*
-    ~comp "inccup/opts" ~(map->js-obj opts)))
+  `(ewen.inccup.incremental.compiler/set-opts ~comp ~(map->js-obj opts)))
 
 #_(defmacro html
   [& options-content]

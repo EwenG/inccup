@@ -11,15 +11,24 @@
   (goog.object/set o k v)
   v)
 
-(defn oset* [o k v]
-  (goog.object/set o k v)
-  o)
-
 (defn oget
   ([o k]
    (goog.object/get o k nil))
   ([o k v]
    (goog.object/get o k (or v nil))))
+
+(defn merge-opts [prev-opts new-opts]
+  (when (goog.object/containsKey new-opts "key")
+    (oset prev-opts "key" (oget new-opts "key")))
+  (when (goog.object/containsKey new-opts "level")
+    (oset prev-opts "level" (oget new-opts "level"))))
+
+(defn set-opts [o new-opts]
+  (if-let [opts (oget o "inccup/opts")]
+    (let [new-o (goog.object/clone o)]
+      (merge-opts (oget opts "inccup/opts") new-opts)
+      new-o)
+    (oset o "inccup/opts" new-opts)))
 
 (defn array-with-path [path arr]
   (oset arr "inccup/update-paths" path)
@@ -332,6 +341,10 @@
 (defn next-sibling [node]
   (when node (.-nextSibling node)))
 
+(defn insert-before [parent new-node node]
+  (.insertBefore parent new-node node)
+  (next-sibling node))
+
 (defn attr-as-prop [attr]
   (case attr
     "class" "className"
@@ -535,30 +548,34 @@
           (do
             (assert (= (.-id prev-element) (.-id element)))
             (update-comp* prev-element element parent node))
-          (if-let [moved-comp (walk-parent-comps
-                               parent-comp level get-comp-by-key
-                               key element)]
-            (let [moved-node (oget moved-comp "inccup/node")]
-              (assert (= (.-id moved-comp) (.-id element)))
-              (aset prev-forms index moved-comp)
-              (walk-parent-comps
-               parent-comp level update-key-on-move key element)
-              (.insertBefore parent moved-node node)
-              (update-comp* moved-comp element
-                            (.-parentNode moved-node) node)
-              (delete-prev-element parent node prev-element parent-comp))
-            (do
-              (aset prev-forms index element)
-              (.insertBefore parent
-                             (create-comp* element parent-comp) node)
-              (delete-prev-element parent node prev-element parent-comp))))
+          (do
+            (if-let [moved-comp (walk-parent-comps
+                                 parent-comp level get-comp-by-key
+                                 key element)]
+              (let [moved-node (oget moved-comp "inccup/node")]
+                (assert (= (.-id moved-comp) (.-id element)))
+                (aset prev-forms index moved-comp)
+                (walk-parent-comps
+                 parent-comp level update-key-on-move key element)
+                (.insertBefore parent moved-node node)
+                (update-comp* moved-comp element parent moved-node)
+                (delete-prev-element parent node prev-element parent-comp))
+              (do
+                (aset prev-forms index element)
+                (let [next-node  (delete-prev-element
+                                  parent node prev-element parent-comp)]
+                  (insert-before
+                   parent (create-comp* element parent-comp) next-node))))))
         (if (and (instance? Component prev-element)
                  (= (.-id prev-element) (.-id element)))
           (update-comp* prev-element element parent node)
           (do
             (aset prev-forms index element)
-            (.insertBefore parent (create-comp* element parent-comp) node)
-            (delete-prev-element parent node prev-element parent-comp)))))
+            (let [next-node (delete-prev-element
+                             parent node prev-element parent-comp)]
+              (insert-before
+               parent (create-comp* element parent-comp) next-node)
+              next-node)))))
     (seq? element)
     (if (inccup-seq? prev-element)
       (loop [node node

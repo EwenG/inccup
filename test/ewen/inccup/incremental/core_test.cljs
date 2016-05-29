@@ -129,6 +129,7 @@
 (defn def1 [x] #h [:div#ii.cc {} x])
 (defn def2 [x y z] #h [x y z])
 (defn def3 [x] #h [:div#ii.cc x])
+(defn def4 [] #h [:div "content"])
 
 (comment
   (-> (render! (new-root) def1 "e")
@@ -144,6 +145,8 @@
   (-> (render! (new-root) def3 "e")
       (update! def3 "f")
       (update! def3 {:id "i"}))
+
+  (render! (new-root) def4)
   )
 
 #_(deftest test1
@@ -225,6 +228,21 @@
 (comment
   (def cc (render! (new-root) template4 (list 1 2)))
   (update! cc template4 (list 2 1))
+  (def ll (atom (cycle (range 20))))
+  (do (update! cc template4 (take 19 @ll))
+      (do (swap! ll #(drop 19 %)) nil))
+  )
+
+(defn template5 [x y] #h [:p {}
+                          (let [cc #h [:div "else"]]
+                            (if y
+                              #h [:div (with-opts {:key 1 :level 2} cc)]
+                              (with-opts {:key 1} cc)))])
+
+(comment
+  (def cc (render! (new-root) template5 3 false))
+  (update! cc template5 3 false)
+  (update! cc template5 3 true)
   )
 
 #_(deftest keyedChildren
