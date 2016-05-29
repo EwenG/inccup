@@ -26,7 +26,7 @@
 (defn set-opts [o new-opts]
   (if-let [opts (oget o "inccup/opts")]
     (let [new-o (goog.object/clone o)]
-      (merge-opts (oget opts "inccup/opts") new-opts)
+      (merge-opts (oget new-o "inccup/opts") new-opts)
       new-o)
     (do (oset o "inccup/opts" new-opts)
         o)))
@@ -558,6 +558,8 @@
                 (aset prev-forms index moved-comp)
                 (walk-parent-comps
                  parent-comp level update-key-on-move key element)
+                (-> (oget moved-comp "inccup/opts")
+                    (oset "level" level))
                 (.insertBefore parent moved-node node)
                 (update-comp* moved-comp element parent moved-node)
                 (delete-prev-element parent node prev-element parent-comp))
