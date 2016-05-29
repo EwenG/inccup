@@ -1,10 +1,10 @@
 (ns ewen.inccup.incremental.compiler
   (:require [ewen.inccup.incremental.emitter :as emitter]
             [ewen.inccup.util :as util]
+            [ewen.inccup.common :as common]
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]
-            [cljs.tagged-literals :refer [*cljs-data-readers*]]
             [clojure.pprint :refer [pprint pp]]))
 
 (def ^:dynamic *dynamic-forms* nil)
@@ -45,7 +45,7 @@
 
 (defn maybe-attr-map
   ([attrs attr-path path tag-attrs]
-   {:pred [(not (some util/unevaluated? (mapcat identity attrs)))]}
+   {:pred [(not (some common/unevaluated? (mapcat identity attrs)))]}
    (when attrs
      (let [[expr used-vars] (track-vars attrs)
            attr-form
@@ -58,45 +58,13 @@
        (update-dynamic-forms form path used-vars)
        nil))))
 
-(defn- literal?
-  "True if x is a literal value that can be rendered as-is."
-  [x]
-  (and (not (util/unevaluated? x))
-       (or (not (or (vector? x) (map? x)))
-           (every? literal? x))))
-
 (defn dynamic-tag [tag path]
-  {:pred [(not (literal? tag))]}
+  {:pred [(not (common/literal? tag))]}
   (let [[expr used-vars] (track-vars tag)]
     (update-dynamic-forms expr path used-vars)
     nil))
 
-(defn- form-name
-  "Get the name of the supplied form."
-  [form]
-  (if (and (seq? form) (symbol? (first form)))
-    (name (first form))))
-
 (declare compile-html)
-
-(defn- not-hint?
-  "True if x is not hinted to be the supplied type."
-  [x type]
-  (if-let [hint (-> x meta :tag)]
-    (not (isa? (eval hint) type))))
-
-(defn- hint?
-  "True if x is hinted to be the supplied type."
-  [x type]
-  (if-let [hint (-> x meta :tag)]
-    (isa? (eval hint) type)))
-
-(defn- not-implicit-map?
-  "True if we can infer that x is not a map."
-  [x]
-  (or (= (form-name x) "for")
-      (not (util/unevaluated? x))
-      (not-hint? x java.util.Map)))
 
 (defn coll->js-array [coll]
   (if (coll? coll)
@@ -133,75 +101,49 @@
   (literal->js '[:e.c {:class "c2"} "e"])
   )
 
-(defn- element-compile-strategy
-  "Returns the compilation strategy to use for a given element."
-  [[tag attrs & content :as element] path]
-  (cond
-    (every? literal? element)
-    ::all-literal
-    (and (literal? tag)
-         (map? attrs)
-         (every? literal? attrs))
-    ::literal-tag-and-literal-attributes
-    (and (literal? tag)
-         (map? attrs))
-    ::literal-tag-and-map-attributes
-    (and (literal? tag) (not-implicit-map? attrs))
-    ::literal-tag-and-no-attributes
-    (literal? tag)
-    ::literal-tag
-    (and (map? attrs) (every? literal? attrs))
-    ::literal-attributes
-    (map? attrs)
-    ::map-attributes
-    (not-implicit-map? attrs)
-    ::no-attributes
-    :else
-    ::default))
-
 (declare compile-seq)
 
 (defmulti compile-element
   {:private true}
-  element-compile-strategy)
+  common/element-compile-strategy)
 
-(defmethod compile-element ::all-literal
+(defmethod compile-element ::common/all-literal
   [element path]
-  (let [[tag attrs content] (util/normalize-element element)]
+  (let [[tag attrs content] (common/normalize-element element)]
     (into [tag attrs] content)))
 
-(defmethod compile-element ::literal-tag-and-literal-attributes
+(defmethod compile-element ::common/literal-tag-and-literal-attributes
   [[tag attrs & content] path]
-  (let [[tag attrs _] (util/normalize-element [tag attrs])]
+  (let [[tag attrs _] (common/normalize-element [tag attrs])]
     (into [tag attrs] (compile-seq content path 2))))
 
-(defmethod compile-element ::literal-tag-and-map-attributes
+(defmethod compile-element ::common/literal-tag-and-map-attributes
   [[tag attrs & content] path]
-  (let [[tag attrs _] (util/normalize-element [tag attrs])]
+  (let [[tag attrs _] (common/normalize-element [tag attrs])]
     (compile-attr-map attrs (conj path 1))
     (into [tag (-> *dynamic-forms* count dec ->DynamicLeaf)]
           (compile-seq content path 2))))
 
-(defmethod compile-element ::literal-tag-and-no-attributes
+(defmethod compile-element ::common/literal-tag-and-no-attributes
   [[tag & content] path]
   (compile-element (apply vector tag {} content) path))
 
-(defmethod compile-element ::literal-tag
+(defmethod compile-element ::common/literal-tag
   [[tag attrs & content :as element] path]
   (let [[tag tag-attrs [first-content & rest-content]]
-        (util/normalize-element element)]
+        (common/normalize-element element)]
     (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
     (into [tag (-> *dynamic-forms* count dec dec ->DynamicLeaf)
            (-> *dynamic-forms* count dec ->DynamicLeaf)]
           (compile-seq rest-content path 3))))
 
-(defmethod compile-element ::literal-attributes
+(defmethod compile-element ::common/literal-attributes
   [[tag attrs & rest-content] path]
   (dynamic-tag tag (conj path 0))
   (into [(-> *dynamic-forms* count dec ->DynamicLeaf) attrs]
         (compile-seq rest-content path 2)))
 
-(defmethod compile-element ::map-attributes
+(defmethod compile-element ::common/map-attributes
   [[tag attrs & rest-content] path]
   (dynamic-tag tag (conj path 0))
   (compile-attr-map attrs (conj path 1))
@@ -209,11 +151,11 @@
          (-> *dynamic-forms* count dec ->DynamicLeaf)]
         (compile-seq rest-content path 2)))
 
-(defmethod compile-element ::no-attributes
+(defmethod compile-element ::common/no-attributes
   [[tag & content] path]
   (compile-element (apply vector tag {} content) path))
 
-(defmethod compile-element ::default
+(defmethod compile-element :default
   [[tag attrs & rest-content :as element] path]
   (dynamic-tag tag (conj path 0))
   (let [tag-index (-> *dynamic-forms* count dec ->DynamicLeaf)]
@@ -246,7 +188,7 @@
     (vector? expr) (compile-element expr path)
     (string? expr) expr
     (keyword? expr) expr
-    (literal? expr) expr
+    (common/literal? expr) expr
     (seq? expr) (compile-dynamic-expr expr path)
     :else (compile-dynamic-expr expr path)))
 
@@ -459,11 +401,6 @@
                     (map :form)
                     (map-indexed
                      (partial form-with-var-dep var-deps-sym)))))))))
-
-(alter-var-root #'*cljs-data-readers* assoc 'h
-                (fn [forms]
-                  {:pre [(vector? forms)]}
-                  `(component ~forms)))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars

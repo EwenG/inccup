@@ -1,12 +1,16 @@
-(ns ewen.inccup.api
-  (:require [ewen.inccup.string.compiler
-             :refer [compile-html maybe-convert-raw-string]]
-            [ewen.inccup.incremental.compiler]
+(ns ewen.inccup.compiler
+  (:require [ewen.inccup.string.compiler :refer [compile-string]]
+            [ewen.inccup.incremental.compiler :refer [component]]
             [ewen.inccup.util
-             :refer [default-output-format name-with-attributes cljs-env?
-                     *html-mode* *output-format*]]))
+             :refer [name-with-attributes cljs-env?
+                     default-output-format
+                     *output-mode* *html-mode* *base-url*]]
+            [cljs.tagged-literals :refer [*cljs-data-readers*]]))
 
-(defn options-with-content [options-content env]
+(defn default-output-mode [env]
+  (if (cljs-env? env) :incremental :string))
+
+#_(defn options-with-content [options-content env]
   (let [[options content] (if (map? (first options-content))
                               [(first options-content)
                                (rest options-content)]
@@ -34,6 +38,45 @@
   (when level (assert (not (nil? key))))
   (assert (or (nil? level) (and (number? level) (> level 0))))
   `(ewen.inccup.incremental.vdom/set-opts ~comp ~(map->js-obj opts)))
+
+(defn tag-reader-fn-cljs
+  ([forms]
+   (tag-reader-fn-cljs forms nil))
+  ([forms {:keys [html-mode output-mode]}]
+   {:pre [(or (nil? output-mode)
+              (= :string output-mode)
+              (= :incremental output-mode))
+          (or (nil? html-mode)
+              (= :xhtml html-mode)
+              (= :html html-mode)
+              (= :sgml html-mode)
+              (= :xml html-mode))
+          (vector? forms)]}
+   (if (or (= :string output-mode)
+           (= :string *output-mode*))
+     (binding [*html-mode* (or html-mode *html-mode*)]
+       `(binding [*html-mode* (or ~html-mode *html-mode*)]
+          (compile-string ~forms)))
+     `(component ~forms))))
+
+(defn tag-reader-fn-clj
+  ([forms]
+   (tag-reader-fn-clj forms nil))
+  ([forms {:keys [html-mode]}]
+   {:pre [(or (nil? html-mode)
+              (= :xhtml html-mode)
+              (= :html html-mode)
+              (= :sgml html-mode)
+              (= :xml html-mode))
+          (vector? forms)]}
+   (binding [*html-mode* (or html-mode *html-mode*)]
+     `(binding [*html-mode* (or ~html-mode *html-mode*)]
+        (compile-string ~forms)))))
+
+(alter-var-root #'*cljs-data-readers* assoc 'h tag-reader-fn-cljs)
+
+(alter-var-root #'*data-readers* assoc 'h tag-reader-fn-clj)
+(set! *data-readers* (assoc *data-readers* 'h tag-reader-fn-clj))
 
 #_(defmacro html
   [& options-content]
