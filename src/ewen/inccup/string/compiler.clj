@@ -119,9 +119,6 @@
   #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input"
     "keygen" "link" "meta" "param" "source" "track" "wbr"})
 
-(defn- xml-mode? []
-  (get #{:xml :xhtml} util/*html-mode*))
-
 (defn- html-mode? []
   (get #{:html :xhtml} util/*html-mode*))
 
@@ -134,24 +131,6 @@
   [tag content]
   (or (not (empty? content))
       (and (html-mode?) (not (void-tags tag)))))
-
-(defn- xml-attribute [k v]
-  (str " " (name k) "=\"" (util/escape-string v) "\""))
-
-(defn- compile-attr [[k v]]
-  (cond
-    (true? v)
-    (if (xml-mode?)
-      (xml-attribute k k)
-      (str " " (name k)))
-    (not v)
-    ""
-    :else
-    (xml-attribute k v)))
-
-(defn- compile-attrs
-  [attrs]
-  (apply str (map compile-attr attrs)))
 
 (deftype RawString [^String s]
   Object
@@ -173,6 +152,11 @@
 
 (defprotocol StringRenderer
   (element->string [this]))
+
+(defn compile-attrs [attrs]
+  (if (some common/unevaluated? (mapcat identity attrs))
+    `(runtime/render-attrs ~attrs)
+    (runtime/render-attrs attrs)))
 
 (defn form->string
   [[tag attrs & content]]
@@ -226,6 +210,59 @@
             ~@(compile-seq content)
             ~(str "</" tag ">"))
       `(str "<" ~tag ~(compile-attrs attrs) ~(end-tag)))))
+
+(defmethod compile-element ::common/literal-tag-and-map-attributes
+  [[tag attrs & content]]
+  (let [[tag attrs _] (common/normalize-element [tag attrs])]
+    (if (container-tag? tag content)
+      `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
+            ~@(compile-seq content)
+            ~(str "</" tag ">"))
+      `(str "<" ~tag ~(compile-attrs attrs) ~(end-tag)))))
+
+#_(defmethod compile-element ::common/literal-tag-and-no-attributes
+  [[tag & content]]
+  (compile-element (apply vector tag {} content) path))
+
+#_(defmethod compile-element ::common/literal-tag
+  [[tag attrs & content :as element]]
+  (let [[tag tag-attrs [first-content & rest-content]]
+        (common/normalize-element element)]
+    (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
+    (into [tag (-> *dynamic-forms* count dec dec ->DynamicLeaf)
+           (-> *dynamic-forms* count dec ->DynamicLeaf)]
+          (compile-seq rest-content path 3))))
+
+#_(defmethod compile-element ::common/literal-attributes
+  [[tag attrs & rest-content]]
+  (dynamic-tag tag (conj path 0))
+  (into [(-> *dynamic-forms* count dec ->DynamicLeaf) attrs]
+        (compile-seq rest-content path 2)))
+
+#_(defmethod compile-element ::common/map-attributes
+  [[tag attrs & rest-content]]
+  (dynamic-tag tag (conj path 0))
+  (compile-attr-map attrs (conj path 1))
+  (into [(-> *dynamic-forms* count dec dec ->DynamicLeaf)
+         (-> *dynamic-forms* count dec ->DynamicLeaf)]
+        (compile-seq rest-content path 2)))
+
+#_(defmethod compile-element ::common/no-attributes
+  [[tag & content]]
+  (compile-element (apply vector tag {} content) path))
+
+#_(defmethod compile-element :default
+  [[tag attrs & rest-content :as element]]
+  (dynamic-tag tag (conj path 0))
+  (let [tag-index (-> *dynamic-forms* count dec ->DynamicLeaf)]
+    (if (= 1 (count element))
+      [tag-index {}]
+      (do
+        (maybe-attr-map attrs (conj path 1) (conj path 2) {})
+        (into [tag-index
+               (-> *dynamic-forms* count dec dec ->DynamicLeaf)
+               (-> *dynamic-forms* count dec ->DynamicLeaf)]
+              (compile-seq rest-content path 3))))))
 
 (defn- compile-seq [content]
   (loop [content content

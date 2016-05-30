@@ -5,7 +5,9 @@
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]
-            [clojure.pprint :refer [pprint pp]]))
+            [clojure.pprint :refer [pprint pp]]
+            [cljs.tagged-literals :refer [*cljs-data-readers*]]
+            [clojure.tools.reader :as reader]))
 
 (def ^:dynamic *dynamic-forms* nil)
 (def ^:dynamic *tracked-vars* #{})

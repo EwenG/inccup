@@ -6,7 +6,7 @@ from an element name."
        :private true}
   re-tag #"([^\s\.#]+)(?:#([^\s\.#]+))?(?:\.([^\s#]+))?")
 
-(defn- unevaluated?
+(defn unevaluated?
   "True if the expression has not been evaluated."
   [expr]
   (or (symbol? expr)
@@ -73,14 +73,6 @@ from an element name."
      ::no-attributes
      :else
      ::default)))
-
-(defn merge-attributes [attrs1 {:keys [id] :as attrs2}]
-  (let [merged-attrs (merge-with
-                      #(cond (nil? %1) %2
-                             (unevaluated? %2) `(str ~%1 " " ~%2)
-                             :else (str %1 " " %2))
-                      attrs1 attrs2)]
-    (if id (assoc merged-attrs :id id) merged-attrs)))
 
 (defn normalize-element
   "Ensure an element vector is of the form [tag-name attrs content]."

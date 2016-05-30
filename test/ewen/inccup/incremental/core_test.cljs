@@ -1,6 +1,7 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
-            [ewen.inccup.compiler :refer-macros [with-opts]]
+            [ewen.inccup.compiler
+             :refer-macros [with-opts register-tagged-literal!]]
             [ewen.inccup.incremental.vdom :as vdom
              :refer [Component render! update!]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
@@ -8,6 +9,8 @@
             [goog.dom])
   (:require-macros [ewen.inccup.incremental.core-test-macros])
   (:refer-clojure :exclude [-equiv]))
+
+(register-tagged-literal! h)
 
 (set-print-fn! #(.log js/console %))
 
@@ -256,6 +259,7 @@
   (run-tests 'ewen.inccup.incremental.core-test)
 
   )
+
 
 
 (comment

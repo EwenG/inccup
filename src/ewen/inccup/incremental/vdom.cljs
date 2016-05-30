@@ -38,7 +38,9 @@
 (defn maybe-merge-attributes [tag-attrs expr]
   (set! *tmp-val* expr)
   (if (map? expr)
-    (util/merge-attributes tag-attrs expr)
+    (let [id (or (:id expr) (get expr "id"))
+          merged-attrs (merge-with #(str %1 " " %2) tag-attrs expr)]
+      (if id (assoc merged-attrs :id id) merged-attrs))
     tag-attrs))
 
 (defn aget-in [arr path count index]

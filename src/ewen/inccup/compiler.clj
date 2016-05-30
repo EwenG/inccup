@@ -39,9 +39,9 @@
   (assert (or (nil? level) (and (number? level) (> level 0))))
   `(ewen.inccup.incremental.vdom/set-opts ~comp ~(map->js-obj opts)))
 
-(defn tag-reader-fn-cljs
+(defn compile-dispatch
   ([forms]
-   (tag-reader-fn-cljs forms nil))
+   (compile-dispatch forms nil))
   ([forms {:keys [html-mode output-mode]}]
    {:pre [(or (nil? output-mode)
               (= :string output-mode)
@@ -59,24 +59,33 @@
           (compile-string ~forms)))
      `(component ~forms))))
 
-(defn tag-reader-fn-clj
+(defn compile-dispatch-string
   ([forms]
-   (tag-reader-fn-clj forms nil))
-  ([forms {:keys [html-mode]}]
-   {:pre [(or (nil? html-mode)
-              (= :xhtml html-mode)
-              (= :html html-mode)
-              (= :sgml html-mode)
-              (= :xml html-mode))
-          (vector? forms)]}
-   (binding [*html-mode* (or html-mode *html-mode*)]
-     `(binding [*html-mode* (or ~html-mode *html-mode*)]
-        (compile-string ~forms)))))
+   (compile-dispatch forms {:output-mode :string}))
+  ([forms {:keys [output-mode] :as opts}]
+   {:pre [(or (nil? output-mode)
+              (= :string output-mode))]}
+   (compile-dispatch forms (assoc opts :output-mode :string))))
 
-(alter-var-root #'*cljs-data-readers* assoc 'h tag-reader-fn-cljs)
+(defmacro register-tagged-literal! [sym]
+  (alter-var-root #'*cljs-data-readers* assoc sym compile-dispatch)
+  (alter-var-root #'*data-readers* assoc sym compile-dispatch-string)
+  (set! *data-readers* (assoc *data-readers* sym compile-dispatch-string))
+  `'~sym)
 
-(alter-var-root #'*data-readers* assoc 'h tag-reader-fn-clj)
-(set! *data-readers* (assoc *data-readers* 'h tag-reader-fn-clj))
+(defmacro h
+  ([forms]
+   (if (cljs-env? &env)
+     (compile-dispatch forms nil)
+     (compile-dispatch-string forms nil)))
+  ([forms opts]
+   (if (cljs-env? &env)
+     (compile-dispatch forms opts)
+     (compile-dispatch-string forms opts))))
+
+(comment
+  (register-tagged-literal! h)
+  )
 
 #_(defmacro html
   [& options-content]
