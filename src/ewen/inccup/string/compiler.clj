@@ -138,7 +138,7 @@
 (defmethod compile-element ::c-comp/all-literal
   [element]
   (let [[tag attrs content] (c-comp/normalize-element element)]
-    (if (get runtime/void-tags tag)
+    (if (get c-runtime/void-tags tag)
       `(str "<" ~tag ~(compile-attrs attrs) " />")
       `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
             ~@(compile-seq content)
@@ -152,7 +152,7 @@
 (defmethod compile-element ::c-comp/literal-tag-and-literal-attributes
   [element]
   (let [[tag attrs content] (c-comp/normalize-element element)]
-    (if (get runtime/void-tags tag)
+    (if (get c-runtime/void-tags tag)
       `(str "<" ~tag ~(compile-attrs attrs) " />")
       `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
             ~@(compile-seq content)
@@ -166,7 +166,7 @@
 (defmethod compile-element ::c-comp/literal-tag-and-map-attributes
   [[tag attrs & content]]
   (let [[tag attrs _] (c-comp/normalize-element [tag attrs])]
-    (if (get runtime/void-tags tag)
+    (if (get c-runtime/void-tags tag)
       `(str "<" ~tag ~(compile-attrs attrs) " />")
       `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
             ~@(compile-seq content)
@@ -193,7 +193,7 @@
         attrs-sym (gensym "attrs")]
     `(let [~attrs-sym ~first-content]
        (if (map? ~attrs-sym)
-         ~(if (get runtime/void-tags tag)
+         ~(if (get c-runtime/void-tags tag)
             `(str ~(str "<" tag)
                   (runtime/render-attrs (c-runtime/merge-attributes
                                          ~tag-attrs ~attrs-sym)) " />")
@@ -202,7 +202,7 @@
                                          ~tag-attrs ~attrs-sym)) ">"
                   ~@(compile-seq rest-content)
                   ~(str "</" tag ">")))
-         ~(if (get runtime/void-tags tag)
+         ~(if (get c-runtime/void-tags tag)
             (str "<" tag (runtime/render-attrs tag-attrs) " />")
             `(str ~(str "<" tag (runtime/render-attrs tag-attrs) ">")
                   ~@(compile-seq content)
@@ -217,7 +217,7 @@
 (defmethod compile-element ::c-comp/literal-attributes
   [[tag attrs & rest-content]]
   `(let [tag# (name ~tag)]
-     (if (get runtime/void-tags tag#)
+     (if (get c-runtime/void-tags tag#)
        (str (str "<" tag#) ~(compile-attrs attrs) " />")
        (str (str "<" tag#) ~(compile-attrs attrs) ">"
             ~@(compile-seq rest-content)
@@ -231,7 +231,7 @@
 (defmethod compile-element ::c-comp/map-attributes
   [[tag attrs & rest-content]]
   `(let [tag# (name ~tag)]
-     (if (get runtime/void-tags tag#)
+     (if (get c-runtime/void-tags tag#)
        (str (str "<" tag#) (runtime/render-attrs ~attrs) " />")
        (str (str "<" tag#) (runtime/render-attrs ~attrs) ">"
             ~@(compile-seq rest-content)
@@ -257,12 +257,12 @@
   `(let [tag# (name ~tag)
          attrs# ~first-content]
      (if (map? attrs#)
-       (if (get runtime/void-tags tag#)
+       (if (get c-runtime/void-tags tag#)
          (str "<" tag# (runtime/render-attrs attrs#) " />")
          (str "<" tag# (runtime/render-attrs attrs#) ">"
               ~@(compile-seq rest-content)
               "</" tag# ">"))
-       (if (get runtime/void-tags tag#)
+       (if (get c-runtime/void-tags tag#)
          (str "<" tag# " />")
          (str "<" tag# ">"
               ~@(compile-seq (cons first-content rest-content))

@@ -133,6 +133,7 @@
 (defn def2 [x y z] #h [x y z])
 (defn def3 [x] #h [:div#ii.cc x])
 (defn def4 [] #h [:div "content"])
+(defn def5 [x] #h [x "content"])
 
 (comment
   (-> (render! (new-root) def1 "e")
@@ -150,6 +151,11 @@
       (update! def3 {:id "i"}))
 
   (render! (new-root) def4)
+
+  (def cc (render! (new-root) def5 :p))
+  (update! cc def5 :div)
+  (update! cc def5 :p)
+  (update! cc def5 :input)
   )
 
 #_(deftest test1

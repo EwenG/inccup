@@ -6,12 +6,6 @@
 (defn- attribute [k v]
   (str " " (name k) "=\"" (util/escape-string v) "\""))
 
-(def void-tags
-  "A list of elements that must be rendered without a
-  closing tag."
-  #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input"
-    "keygen" "link" "meta" "param" "source" "track" "wbr"})
-
 (defn- render-attr [[k v]]
   (cond
     (not v) ""
