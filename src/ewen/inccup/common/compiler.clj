@@ -1,5 +1,6 @@
-(ns ewen.inccup.common
-  (:require [clojure.string :as str]))
+(ns ewen.inccup.common.compiler
+  (:require [clojure.string :as str]
+            [ewen.inccup.common.runtime :as runtime]))
 
 (def ^{:doc "Regular expression that parses a CSS-style id and class
 from an element name."
@@ -70,9 +71,7 @@ from an element name."
      (map? attrs)
      ::map-attributes
      (not-implicit-map? attrs)
-     ::no-attributes
-     :else
-     ::default)))
+     ::no-attributes)))
 
 (defn normalize-element
   "Ensure an element vector is of the form [tag-name attrs content]."
@@ -89,5 +88,5 @@ from an element name."
                                     (str/replace ^String class "." " "))))
         map-attrs        (first content)]
     (if (map? map-attrs)
-      [tag (merge-attributes tag-attrs map-attrs) (next content)]
+      [tag (runtime/merge-attributes tag-attrs map-attrs) (next content)]
       [tag tag-attrs content])))

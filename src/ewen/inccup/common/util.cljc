@@ -1,4 +1,4 @@
-(ns ewen.inccup.util
+(ns ewen.inccup.common.util
   "Utility functions for Hiccup."
   (:require [clojure.string :as str])
   #?(:clj (:import [clojure.lang Keyword]

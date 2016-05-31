@@ -1,23 +1,21 @@
 (ns ewen.inccup.string.runtime
-  (:require [ewen.inccup.util :as util #?@(:cljs [:refer [RawString]])])
-  #?(:clj (:import [ewen.inccup.util RawString])))
+  (:require [ewen.inccup.common.util :as util
+             #?@(:cljs [:refer [RawString]])])
+  #?(:clj (:import [ewen.inccup.common.util RawString])))
 
-(defn- xml-mode? []
-  (get #{:xml :xhtml} util/*html-mode*))
-
-(defn- xml-attribute [k v]
+(defn- attribute [k v]
   (str " " (name k) "=\"" (util/escape-string v) "\""))
 
+(def void-tags
+  "A list of elements that must be rendered without a
+  closing tag."
+  #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input"
+    "keygen" "link" "meta" "param" "source" "track" "wbr"})
+
 (defn- render-attr [[k v]]
-  (cond
-    (true? v)
-    (if (xml-mode?)
-      (xml-attribute k k)
-      (str " " (name k)))
-    (not v)
+  (if (not v)
     ""
-    :else
-    (xml-attribute k v)))
+    (attribute k v)))
 
 (defn render-attrs
   [attrs]

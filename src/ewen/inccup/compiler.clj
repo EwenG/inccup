@@ -1,10 +1,9 @@
 (ns ewen.inccup.compiler
   (:require [ewen.inccup.string.compiler :refer [compile-string]]
             [ewen.inccup.incremental.compiler :refer [component]]
-            [ewen.inccup.util
+            [ewen.inccup.common.util
              :refer [name-with-attributes cljs-env?
-                     default-output-format
-                     *output-mode* *html-mode* *base-url*]]
+                     default-output-format *output-mode*]]
             [cljs.tagged-literals :refer [*cljs-data-readers*]]))
 
 (defn default-output-mode [env]
@@ -42,21 +41,14 @@
 (defn compile-dispatch
   ([forms]
    (compile-dispatch forms nil))
-  ([forms {:keys [html-mode output-mode]}]
+  ([forms {:keys [output-mode]}]
    {:pre [(or (nil? output-mode)
               (= :string output-mode)
               (= :incremental output-mode))
-          (or (nil? html-mode)
-              (= :xhtml html-mode)
-              (= :html html-mode)
-              (= :sgml html-mode)
-              (= :xml html-mode))
           (vector? forms)]}
    (if (or (= :string output-mode)
            (= :string *output-mode*))
-     (binding [*html-mode* (or html-mode *html-mode*)]
-       `(binding [*html-mode* (or ~html-mode *html-mode*)]
-          (compile-string ~forms)))
+     `(compile-string ~forms)
      `(component ~forms))))
 
 (defn compile-dispatch-string

@@ -1,7 +1,8 @@
 (ns ewen.inccup.string.compiler
   "Internal functions for compilation."
-  (:require [ewen.inccup.util :as util]
-            [ewen.inccup.common :as common :refer [literal?]]
+  (:require [ewen.inccup.common.util :as util]
+            [ewen.inccup.common.runtime :as c-runtime]
+            [ewen.inccup.common.compiler :as c-comp]
             [ewen.inccup.string.runtime :as runtime])
   (:import [clojure.lang IPersistentVector ISeq Named]))
 
@@ -101,37 +102,6 @@
      (if *is-top-level*
        (str out-str#) out-str#)))
 
-
-
-
-
-
-
-
-
-
-
-
-
-(def ^{:doc "A list of elements that must be rendered without a closing tag."
-       :private true}
-  void-tags
-  #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input"
-    "keygen" "link" "meta" "param" "source" "track" "wbr"})
-
-(defn- html-mode? []
-  (get #{:html :xhtml} util/*html-mode*))
-
-(defn- end-tag []
-  (if (xml-mode?) " />" ">"))
-
-(defn- container-tag?
-  "Returns true if the tag has content or is not a void tag.
-  In non-HTML modes, all contentless tags are assumed to be void tags."
-  [tag content]
-  (or (not (empty? content))
-      (and (html-mode?) (not (void-tags tag)))))
-
 (deftype RawString [^String s]
   Object
   (^String toString [this] s)
@@ -154,115 +124,156 @@
   (element->string [this]))
 
 (defn compile-attrs [attrs]
-  (if (some common/unevaluated? (mapcat identity attrs))
+  (if (some c-comp/unevaluated? (mapcat identity attrs))
     `(runtime/render-attrs ~attrs)
     (runtime/render-attrs attrs)))
-
-(defn form->string
-  [[tag attrs & content]]
-  (if (container-tag? tag content)
-    (str "<" tag (compile-attrs attrs) ">"
-         (element->string content)
-         "</" tag ">")
-    (str "<" tag (compile-attrs attrs) (end-tag))))
-
-(extend-protocol StringRenderer
-  IPersistentVector
-  (element->string [this]
-    (form->string this))
-  ISeq
-  (element->string [this]
-    (apply str (map element->string this)))
-  RawString
-  (element->string [this]
-    (str this))
-  Named
-  (element->string [this]
-    (util/escape-string (name this)))
-  Object
-  (element->string [this]
-    (util/escape-string (str this)))
-  nil
-  (element->string [this]
-    ""))
 
 (declare compile-seq)
 (declare compile-dispatch)
 
 (defmulti compile-element
   {:private true}
-  common/element-compile-strategy)
+  c-comp/element-compile-strategy)
 
-(defmethod compile-element ::common/all-literal
+(defmethod compile-element ::c-comp/all-literal
   [element]
-  (let [[tag attrs content] (common/normalize-element element)]
-    (if (container-tag? tag content)
+  (let [[tag attrs content] (c-comp/normalize-element element)]
+    (if (get runtime/void-tags tag)
+      `(str "<" ~tag ~(compile-attrs attrs) " />")
       `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
             ~@(compile-seq content)
-            ~(str "</" tag ">"))
-      `(str "<" ~tag ~(compile-attrs attrs) ~(end-tag)))))
+            ~(str "</" tag ">")))))
 
-(defmethod compile-element ::common/literal-tag-and-literal-attributes
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (h [:div])
+  )
+
+(defmethod compile-element ::c-comp/literal-tag-and-literal-attributes
   [element]
-  (let [[tag attrs content] (common/normalize-element element)]
-    (if (container-tag? tag content)
+  (let [[tag attrs content] (c-comp/normalize-element element)]
+    (if (get runtime/void-tags tag)
+      `(str "<" ~tag ~(compile-attrs attrs) " />")
       `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
             ~@(compile-seq content)
-            ~(str "</" tag ">"))
-      `(str "<" ~tag ~(compile-attrs attrs) ~(end-tag)))))
+            ~(str "</" tag ">")))))
 
-(defmethod compile-element ::common/literal-tag-and-map-attributes
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (h [:div {:e "e"}])
+  )
+
+(defmethod compile-element ::c-comp/literal-tag-and-map-attributes
   [[tag attrs & content]]
-  (let [[tag attrs _] (common/normalize-element [tag attrs])]
-    (if (container-tag? tag content)
+  (let [[tag attrs _] (c-comp/normalize-element [tag attrs])]
+    (if (get runtime/void-tags tag)
+      `(str "<" ~tag ~(compile-attrs attrs) " />")
       `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
             ~@(compile-seq content)
-            ~(str "</" tag ">"))
-      `(str "<" ~tag ~(compile-attrs attrs) ~(end-tag)))))
+            ~(str "</" tag ">")))))
 
-#_(defmethod compile-element ::common/literal-tag-and-no-attributes
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (let [e "ee"] (h [:div {:e e}]))
+  )
+
+(defmethod compile-element ::c-comp/literal-tag-and-no-attributes
   [[tag & content]]
-  (compile-element (apply vector tag {} content) path))
+  (compile-element (apply vector tag {} content)))
 
-#_(defmethod compile-element ::common/literal-tag
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (let [e "ee"] (h [:div ^String e]))
+  )
+
+(defmethod compile-element ::c-comp/literal-tag
   [[tag attrs & content :as element]]
-  (let [[tag tag-attrs [first-content & rest-content]]
-        (common/normalize-element element)]
-    (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
-    (into [tag (-> *dynamic-forms* count dec dec ->DynamicLeaf)
-           (-> *dynamic-forms* count dec ->DynamicLeaf)]
-          (compile-seq rest-content path 3))))
+  (let [[tag tag-attrs [first-content & rest-content :as content]]
+        (c-comp/normalize-element element)
+        attrs-sym (gensym "attrs")]
+    `(let [~attrs-sym ~first-content]
+       (if (map? ~attrs-sym)
+         ~(if (get runtime/void-tags tag)
+            `(str ~(str "<" tag)
+                  (runtime/render-attrs (c-runtime/merge-attributes
+                                         ~tag-attrs ~attrs-sym)) " />")
+            `(str ~(str "<" tag)
+                  (runtime/render-attrs (c-runtime/merge-attributes
+                                         ~tag-attrs ~attrs-sym)) ">"
+                  ~@(compile-seq rest-content)
+                  ~(str "</" tag ">")))
+         ~(if (get runtime/void-tags tag)
+            (str "<" tag (runtime/render-attrs tag-attrs) " />")
+            `(str ~(str "<" tag (runtime/render-attrs tag-attrs) ">")
+                  ~@(compile-seq content)
+                  ~(str "</" tag ">")))))))
 
-#_(defmethod compile-element ::common/literal-attributes
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (let [e "ee"] (h [:div e]))
+  (let [e {:e "e"}] (h [:div e]))
+  )
+
+(defmethod compile-element ::c-comp/literal-attributes
   [[tag attrs & rest-content]]
-  (dynamic-tag tag (conj path 0))
-  (into [(-> *dynamic-forms* count dec ->DynamicLeaf) attrs]
-        (compile-seq rest-content path 2)))
+  `(let [tag# (name ~tag)]
+     (if (get runtime/void-tags tag#)
+       (str (str "<" tag#) ~(compile-attrs attrs) " />")
+       (str (str "<" tag#) ~(compile-attrs attrs) ">"
+            ~@(compile-seq rest-content)
+            (str "</" tag# ">")))))
 
-#_(defmethod compile-element ::common/map-attributes
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (let [e :p] (h [e {:e "e"}]))
+  )
+
+(defmethod compile-element ::c-comp/map-attributes
   [[tag attrs & rest-content]]
-  (dynamic-tag tag (conj path 0))
-  (compile-attr-map attrs (conj path 1))
-  (into [(-> *dynamic-forms* count dec dec ->DynamicLeaf)
-         (-> *dynamic-forms* count dec ->DynamicLeaf)]
-        (compile-seq rest-content path 2)))
+  `(let [tag# (name ~tag)]
+     (if (get runtime/void-tags tag#)
+       (str (str "<" tag#) (runtime/render-attrs ~attrs) " />")
+       (str (str "<" tag#) (runtime/render-attrs ~attrs) ">"
+            ~@(compile-seq rest-content)
+            (str "</" tag# ">")))))
 
-#_(defmethod compile-element ::common/no-attributes
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (let [e :p f "e"] (h [e {:e f}]))
+  )
+
+(defmethod compile-element ::c-comp/no-attributes
   [[tag & content]]
-  (compile-element (apply vector tag {} content) path))
+  (compile-element (apply vector tag {} content)))
 
-#_(defmethod compile-element :default
-  [[tag attrs & rest-content :as element]]
-  (dynamic-tag tag (conj path 0))
-  (let [tag-index (-> *dynamic-forms* count dec ->DynamicLeaf)]
-    (if (= 1 (count element))
-      [tag-index {}]
-      (do
-        (maybe-attr-map attrs (conj path 1) (conj path 2) {})
-        (into [tag-index
-               (-> *dynamic-forms* count dec dec ->DynamicLeaf)
-               (-> *dynamic-forms* count dec ->DynamicLeaf)]
-              (compile-seq rest-content path 3))))))
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (c-comp/element-compile-strategy '[a])
+  (let [e :p] (h [e]))
+  )
+
+(defmethod compile-element :default
+  [[tag first-content & rest-content]]
+  `(let [tag# (name ~tag)
+         attrs# ~first-content]
+     (if (map? attrs#)
+       (if (get runtime/void-tags tag#)
+         (str "<" tag# (runtime/render-attrs attrs#) " />")
+         (str "<" tag# (runtime/render-attrs attrs#) ">"
+              ~@(compile-seq rest-content)
+              "</" tag# ">"))
+       (if (get runtime/void-tags tag#)
+         (str "<" tag# " />")
+         (str "<" tag# ">"
+              ~@(compile-seq (cons first-content rest-content))
+              "</" tag# ">")))))
+
+(comment
+  (require '[ewen.inccup.compiler :refer [h]])
+  (c-comp/element-compile-strategy '[a b])
+  (let [e :p f {:e "e"}] (h [e f]))
+  (let [e :p f "r"] (h [e f]))
+  )
 
 (defn- compile-seq [content]
   (loop [content content
@@ -277,9 +288,9 @@
     (vector? expr) (compile-element expr)
     (string? expr) expr
     (keyword? expr) expr
-    (literal? expr) expr
-    (seq? expr) `(ewen.inccup.string.runtime/form->string ~expr)
-    :else `(ewen.inccup.string.runtime/form->string ~expr)))
+    (c-comp/literal? expr) expr
+    (seq? expr) `(runtime/form->string ~expr)
+    :else `(runtime/form->string ~expr)))
 
 (defmacro compile-string [forms]
   (compile-dispatch forms))

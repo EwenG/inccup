@@ -1,6 +1,7 @@
 (ns ewen.inccup.incremental.vdom
   (:require [clojure.string :as str]
-            [ewen.inccup.util :as util]
+            [ewen.inccup.common.util :as util]
+            [ewen.inccup.common.runtime :as c-runtime]
             [goog.object]
             [goog.dom]))
 
@@ -38,9 +39,7 @@
 (defn maybe-merge-attributes [tag-attrs expr]
   (set! *tmp-val* expr)
   (if (map? expr)
-    (let [id (or (:id expr) (get expr "id"))
-          merged-attrs (merge-with #(str %1 " " %2) tag-attrs expr)]
-      (if id (assoc merged-attrs :id id) merged-attrs))
+    (c-runtime/merge-attributes tag-attrs expr)
     tag-attrs))
 
 (defn aget-in [arr path count index]

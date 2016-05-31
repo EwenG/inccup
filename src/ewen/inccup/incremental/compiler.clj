@@ -1,7 +1,7 @@
 (ns ewen.inccup.incremental.compiler
   (:require [ewen.inccup.incremental.emitter :as emitter]
-            [ewen.inccup.util :as util]
-            [ewen.inccup.common :as common]
+            [ewen.inccup.common.util :as util]
+            [ewen.inccup.common.compiler :as c-comp]
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]
@@ -47,7 +47,7 @@
 
 (defn maybe-attr-map
   ([attrs attr-path path tag-attrs]
-   {:pred [(not (some common/unevaluated? (mapcat identity attrs)))]}
+   {:pred [(not (some c-comp/unevaluated? (mapcat identity attrs)))]}
    (when attrs
      (let [[expr used-vars] (track-vars attrs)
            attr-form
@@ -61,7 +61,7 @@
        nil))))
 
 (defn dynamic-tag [tag path]
-  {:pred [(not (common/literal? tag))]}
+  {:pred [(not (c-comp/literal? tag))]}
   (let [[expr used-vars] (track-vars tag)]
     (update-dynamic-forms expr path used-vars)
     nil))
@@ -107,45 +107,45 @@
 
 (defmulti compile-element
   {:private true}
-  common/element-compile-strategy)
+  c-comp/element-compile-strategy)
 
-(defmethod compile-element ::common/all-literal
+(defmethod compile-element ::c-comp/all-literal
   [element path]
-  (let [[tag attrs content] (common/normalize-element element)]
+  (let [[tag attrs content] (c-comp/normalize-element element)]
     (into [tag attrs] content)))
 
-(defmethod compile-element ::common/literal-tag-and-literal-attributes
+(defmethod compile-element ::c-comp/literal-tag-and-literal-attributes
   [[tag attrs & content] path]
-  (let [[tag attrs _] (common/normalize-element [tag attrs])]
+  (let [[tag attrs _] (c-comp/normalize-element [tag attrs])]
     (into [tag attrs] (compile-seq content path 2))))
 
-(defmethod compile-element ::common/literal-tag-and-map-attributes
+(defmethod compile-element ::c-comp/literal-tag-and-map-attributes
   [[tag attrs & content] path]
-  (let [[tag attrs _] (common/normalize-element [tag attrs])]
+  (let [[tag attrs _] (c-comp/normalize-element [tag attrs])]
     (compile-attr-map attrs (conj path 1))
     (into [tag (-> *dynamic-forms* count dec ->DynamicLeaf)]
           (compile-seq content path 2))))
 
-(defmethod compile-element ::common/literal-tag-and-no-attributes
+(defmethod compile-element ::c-comp/literal-tag-and-no-attributes
   [[tag & content] path]
   (compile-element (apply vector tag {} content) path))
 
-(defmethod compile-element ::common/literal-tag
+(defmethod compile-element ::c-comp/literal-tag
   [[tag attrs & content :as element] path]
   (let [[tag tag-attrs [first-content & rest-content]]
-        (common/normalize-element element)]
+        (c-comp/normalize-element element)]
     (maybe-attr-map first-content (conj path 1) (conj path 2) tag-attrs)
     (into [tag (-> *dynamic-forms* count dec dec ->DynamicLeaf)
            (-> *dynamic-forms* count dec ->DynamicLeaf)]
           (compile-seq rest-content path 3))))
 
-(defmethod compile-element ::common/literal-attributes
+(defmethod compile-element ::c-comp/literal-attributes
   [[tag attrs & rest-content] path]
   (dynamic-tag tag (conj path 0))
   (into [(-> *dynamic-forms* count dec ->DynamicLeaf) attrs]
         (compile-seq rest-content path 2)))
 
-(defmethod compile-element ::common/map-attributes
+(defmethod compile-element ::c-comp/map-attributes
   [[tag attrs & rest-content] path]
   (dynamic-tag tag (conj path 0))
   (compile-attr-map attrs (conj path 1))
@@ -153,7 +153,7 @@
          (-> *dynamic-forms* count dec ->DynamicLeaf)]
         (compile-seq rest-content path 2)))
 
-(defmethod compile-element ::common/no-attributes
+(defmethod compile-element ::c-comp/no-attributes
   [[tag & content] path]
   (compile-element (apply vector tag {} content) path))
 
@@ -190,7 +190,7 @@
     (vector? expr) (compile-element expr path)
     (string? expr) expr
     (keyword? expr) expr
-    (common/literal? expr) expr
+    (c-comp/literal? expr) expr
     (seq? expr) (compile-dynamic-expr expr path)
     :else (compile-dynamic-expr expr path)))
 
