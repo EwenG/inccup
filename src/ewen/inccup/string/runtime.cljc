@@ -13,9 +13,10 @@
     "keygen" "link" "meta" "param" "source" "track" "wbr"})
 
 (defn- render-attr [[k v]]
-  (if (not v)
-    ""
-    (attribute k v)))
+  (cond
+    (not v) ""
+    (not (keyword? k)) ""
+    :else (attribute k v)))
 
 (defn render-attrs
   [attrs]

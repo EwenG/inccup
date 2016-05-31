@@ -320,8 +320,15 @@
                 (aset element index (str form)))))))
 
 (defn attrs->js [attrs]
-  (apply js-obj (interleave (map name (keys attrs))
-                            (map str (vals attrs)))))
+  (let [attrs-js (js-obj)
+        attr-keys (keys attrs)]
+    (loop [attr-keys attr-keys]
+      (if-let [k (first attr-keys)]
+        (do
+          (when (keyword? k)
+            (oset attrs-js (name k) (str (get attrs k))))
+          (recur (rest attr-keys)))
+        attrs-js))))
 
 (defn identical-params? [prev-params params deps-indexes]
   (loop [index 0]
