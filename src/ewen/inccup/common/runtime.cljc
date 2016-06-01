@@ -1,5 +1,7 @@
 (ns ewen.inccup.common.runtime)
 
+(def ^:dynamic *attrs-or-first-child* nil)
+
 (def void-tags
   "A list of elements that must be rendered without a
   closing tag."
@@ -13,3 +15,13 @@
                         (if attr1 (str attr1 " " attr2) attr2))
                       tag-attrs expr)]
     (if id (assoc merged-attrs :id id) merged-attrs)))
+
+(defn maybe-merge-attributes [tag-attrs expr]
+  (set! *attrs-or-first-child* expr)
+  (if (map? expr)
+    (merge-attributes tag-attrs expr)
+    tag-attrs))
+
+(defn maybe-first-child []
+  (if (map? *attrs-or-first-child*)
+    nil *attrs-or-first-child*))

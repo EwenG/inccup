@@ -5,7 +5,6 @@
             [goog.object]
             [goog.dom]))
 
-(def ^:dynamic *tmp-val* nil)
 (def ^:dynamic *globals* nil)
 
 (defn oset [o k v]
@@ -35,12 +34,6 @@
 (defn array-with-path [path arr]
   (oset arr "inccup/update-paths" path)
   arr)
-
-(defn maybe-merge-attributes [tag-attrs expr]
-  (set! *tmp-val* expr)
-  (if (map? expr)
-    (c-runtime/merge-attributes tag-attrs expr)
-    tag-attrs))
 
 (defn aget-in [arr path count index]
   (if (< index count)
