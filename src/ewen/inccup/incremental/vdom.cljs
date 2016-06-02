@@ -730,7 +730,7 @@
               (inccup-seq? prev-form) (walk-inccup-seq node prev-form)
               :else (next-sibling node))))
     (string? static)
-    (next-sibling node)
+    (skip-text-node node)
     :else
     (let [update-paths (oget static "inccup/update-paths")]
       (if (keep-walking-path? update-paths var-deps-arr)
