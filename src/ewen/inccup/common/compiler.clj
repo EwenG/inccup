@@ -11,6 +11,11 @@ from an element name."
 
 (deftype DynamicLeaf [index])
 
+(defn coll->js-array [coll]
+  (if (coll? coll)
+    `(cljs.core/array ~@(map coll->js-array coll))
+    coll))
+
 (defn unevaluated?
   "True if the expression has not been evaluated."
   [expr]
@@ -132,17 +137,17 @@ from an element name."
 (defmethod compile-element ::all-literal
   [element path]
   (let [[tag attrs content] (normalize-element element)]
-    (into [tag attrs] content)))
+    (into [(name tag) attrs] content)))
 
 (defmethod compile-element ::literal-tag-and-literal-attributes
   [[tag attrs & content] path]
   (let [[tag attrs _] (normalize-element [tag attrs])]
-    (into [tag attrs] (compile-seq content path 2))))
+    (into [(name tag) attrs] (compile-seq content path 2))))
 
 (defmethod compile-element ::literal-tag-and-map-attributes
   [[tag attrs & content] path]
   (let [[tag attrs _] (normalize-element [tag attrs])]
-    (into [tag (compile-attr-map attrs (conj path 1))]
+    (into [(name tag) (compile-attr-map attrs (conj path 1))]
           (compile-seq content path 2))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
@@ -156,7 +161,7 @@ from an element name."
         [attrs-dyn-leaf first-child-dyn-leaf]
         (maybe-attr-map first-content (conj path 1)
                         (conj path 2) tag-attrs)]
-    (into [tag attrs-dyn-leaf first-child-dyn-leaf]
+    (into [(name tag) attrs-dyn-leaf first-child-dyn-leaf]
           (compile-seq rest-content path 3))))
 
 (defmethod compile-element ::literal-attributes
@@ -207,3 +212,30 @@ from an element name."
     (literal? expr) expr
     (seq? expr) (compile-dynamic-expr expr path)
     :else (compile-dynamic-expr expr path)))
+
+#_(defn process-static [process-fn]
+  (fn [x]
+    (cond
+      (nil? x) (process-fn nil)
+      (string? x) x
+      (number? x) (str x)
+      (keyword? x) (name x)
+      (symbol? x) (str x)
+      (vector? x)
+      (let [update-paths (-> x meta :update-paths)
+            [tag attrs & content] x]
+        (if update-paths
+          `(ewen.inccup.incremental.vdom/array-with-path
+            ~(coll->js-array update-paths)
+            (cljs.core/array ~(literal->js tag)
+                             ~(literal->js attrs)
+                             ~@(map literal->js content)))
+          `(cljs.core/array ~(literal->js tag)
+                            ~(literal->js attrs)
+                            ~@(map literal->js content))))
+      (map? x) `(cljs.core/js-obj
+                 ~@(interleave (map name (keys x))
+                               (map literal->js (vals x))))
+      (instance? DynamicLeaf x) (.-index x)
+      :else (throw (IllegalArgumentException.
+                    (str "Not a literal element: " x))))))

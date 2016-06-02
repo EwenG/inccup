@@ -22,15 +22,8 @@
 
 (declare compile-html)
 
-(defn coll->js-array [coll]
-  (if (coll? coll)
-    `(cljs.core/array ~@(map coll->js-array coll))
-    coll))
-
 (defn literal->js [x]
   (cond
-    (nil? x) nil
-    (string? x) x
     (number? x) (str x)
     (keyword? x) (name x)
     (symbol? x) (str x)
@@ -39,22 +32,49 @@
           [tag attrs & content] x]
       (if update-paths
         `(ewen.inccup.incremental.vdom/array-with-path
-          ~(coll->js-array update-paths)
+          ~(c-comp/coll->js-array update-paths)
           (cljs.core/array ~(literal->js tag)
                            ~(literal->js attrs)
-                           ~@(map literal->js content)))
+                           ~@content))
         `(cljs.core/array ~(literal->js tag)
                           ~(literal->js attrs)
-                          ~@(map literal->js content))))
+                          ~@content)))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
-                             (map literal->js (vals x))))
+                             (vals x)))
     (instance? DynamicLeaf x) (.-index x)
-    :else (throw (IllegalArgumentException.
-                  (str "Not a literal element: " x)))))
+    :else x))
+
+(defn handle-void-tags [x]
+  (if (vector? x)
+    (let [[tag attrs & children] x
+          m (meta x)]
+      (cond-> x
+        (get c-runtime/void-tags tag) (subvec 0 2)
+        m (with-meta m)))
+    x))
+
+(defn walk-static* [inner outer f form]
+  (let [transformed (inner form)]
+    (if (vector? transformed)
+      (let [[tag attrs & children] transformed
+            m (meta transformed)]
+        (cond-> (subvec transformed 0 2)
+          true (into (doall (map f children)))
+          m (with-meta m)
+          true outer))
+      (outer transformed))))
+
+(defn walk-static [inner outer static]
+  (walk-static* inner outer (partial walk-static inner outer) static))
 
 (comment
   (literal->js '[:e.c {:class "c2"} "e"])
+
+  (walk-static
+   handle-void-tags literal->js
+   ["div" {:id "ii", :class "cc"} ["p" {} ["p2" {}]]
+    (c-comp/->DynamicLeaf 1)])
   )
 
 (defn dynamic-form-with-tracked-vars
@@ -123,7 +143,7 @@
                    (recur (static-with-metas static update-path)
                           (rest dynamic))
                    static))
-        static (literal->js static)
+        static (walk-static handle-void-tags literal->js static)
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         id (swap! component-id inc)]
     `(ewen.inccup.incremental.vdom/->Component
@@ -133,14 +153,14 @@
         (goog.object/get
          ewen.inccup.incremental.vdom/*globals* ~id nil) "static")
        ~static)
-      ~(coll->js-array (keys tracked-vars))
+      ~(c-comp/coll->js-array (keys tracked-vars))
       (cljs.core/or
        (goog.object/get
         (goog.object/get
          ewen.inccup.incremental.vdom/*globals* ~id nil) "var-deps")
        ~(->> dynamic (map :var-deps)
              (map var-deps->indexes)
-             coll->js-array))
+             c-comp/coll->js-array))
       ~(let [var-deps-sym (gensym "var-deps")]
          `(fn [~var-deps-sym]
             (cljs.core/array
