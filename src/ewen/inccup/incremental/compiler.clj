@@ -46,20 +46,9 @@
     :else x))
 
 (defn dynamic-form-with-tracked-vars
-  [env tracked-vars {:keys [form type tag-attrs] :as dynamic-form}]
+  [env tracked-vars {:keys [form] :as dynamic-form}]
   (let [[expr used-vars] (track-vars env tracked-vars form)]
-    (case type
-      :child (assoc dynamic-form :var-deps used-vars)
-      :tag (assoc dynamic-form :var-deps used-vars)
-      :attrs (assoc dynamic-form :var-deps used-vars)
-      :maybe-attrs
-      (assoc dynamic-form
-             :var-deps used-vars
-             :form `(c-runtime/maybe-merge-attributes ~tag-attrs ~form))
-      :maybe-first-child
-      (assoc dynamic-form
-             :var-deps used-vars
-             :form `(c-runtime/maybe-first-child)))))
+    (assoc dynamic-form :var-deps used-vars)))
 
 (defn dynamic-forms-with-tracked-vars [env tracked-vars dynamic]
   (into [] (map (partial dynamic-form-with-tracked-vars env tracked-vars))

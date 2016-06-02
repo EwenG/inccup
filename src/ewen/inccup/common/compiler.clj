@@ -74,37 +74,33 @@ from an element name."
       [tag (runtime/merge-attributes tag-attrs map-attrs) (next content)]
       [tag tag-attrs content])))
 
-(defn update-dynamic-forms
-  ([expr path type]
-   (update-dynamic-forms expr path type nil))
-  ([expr path type opts]
-   (when *dynamic-forms*
-     (set! *dynamic-forms*
-           (conj *dynamic-forms*
-                 (merge opts
-                        {:path path
-                         :form expr
-                         :index (count *dynamic-forms*)
-                         :type type})))
-     (-> (count *dynamic-forms*) dec ->DynamicLeaf))))
+(defn update-dynamic-forms [expr path]
+  (when *dynamic-forms*
+    (set! *dynamic-forms*
+          (conj *dynamic-forms*
+                {:path path
+                 :form expr
+                 :index (count *dynamic-forms*)}))
+    (-> (count *dynamic-forms*) dec ->DynamicLeaf)))
 
 (defn compile-dynamic-expr [expr path]
-  (update-dynamic-forms expr path :child))
+  (update-dynamic-forms expr path))
 
 (defn compile-attr-map [attrs path]
-  (update-dynamic-forms attrs path :attrs))
+  (update-dynamic-forms attrs path))
 
 (defn maybe-attr-map
   ([attrs attr-path path tag-attrs]
    {:pred [(not nil? attrs)
            (not (some c-comp/unevaluated? (mapcat identity attrs)))]}
    [(update-dynamic-forms
-     attrs attr-path :maybe-attrs {:tag-attrs tag-attrs})
-    (update-dynamic-forms attrs path :maybe-first-child)]))
+     `(c-runtime/maybe-merge-attributes ~tag-attrs ~attrs) attr-path)
+    (update-dynamic-forms
+     `(c-runtime/maybe-first-child) path)]))
 
 (defn dynamic-tag [tag path]
   {:pred [(not (c-comp/literal? tag))]}
-  (update-dynamic-forms tag path :tag))
+  (update-dynamic-forms tag path))
 
 (defn element-compile-strategy
   "Returns the compilation strategy to use for a given element."
@@ -237,7 +233,6 @@ from an element name."
   (walk-static* inner outer (partial walk-static inner outer) static))
 
 (comment
-
   (walk-static
    handle-void-tags identity
    ["div" {:id "ii", :class "cc"} ["p" {} ["p2" {}]]

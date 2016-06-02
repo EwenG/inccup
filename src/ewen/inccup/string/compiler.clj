@@ -4,7 +4,8 @@
             [ewen.inccup.common.runtime :as c-runtime]
             [ewen.inccup.common.compiler :as c-comp]
             [ewen.inccup.string.runtime :as runtime])
-  (:import [clojure.lang IPersistentVector ISeq Named]))
+  (:import [clojure.lang IPersistentVector ISeq Named]
+           [ewen.inccup.common.compiler DynamicLeaf]))
 
 (deftype RawString [^String s]
   Object
@@ -25,131 +26,89 @@
   [x]
   (instance? RawString x))
 
-(defprotocol StringRenderer
-  (element->string [this]))
+(defn get-dynamic-form [dynamic dyn-leaf]
+  (->> (.-index dyn-leaf)
+       (get dynamic)
+       :form))
 
-(defn compile-attrs [attrs]
-  (if (some c-comp/unevaluated? (mapcat identity attrs))
-    `(runtime/render-attrs ~attrs)
+(defn compile-attrs [dynamic attrs]
+  (if (instance? DynamicLeaf attrs)
+    `(runtime/render-attrs ~(get-dynamic-form dynamic attrs))
     (runtime/render-attrs attrs)))
 
-(declare compile-seq)
-(declare compile-dispatch)
+(defn literal->string [dynamic x]
+  (cond
+    (instance? RawString x) (str x)
+    (keyword? x) (util/escape-string (name x))
+    (vector? x)
+    (let [[tag attrs & content] x]
+      (cond
+        (instance? DynamicLeaf tag)
+        `(let [tag# (name ~(get-dynamic-form dynamic tag))]
+           (if (get c-runtime/void-tags tag#)
+             (str "<" tag# ~(compile-attrs dynamic attrs) " />")
+             (str "<" tag# ~(compile-attrs dynamic attrs) ">"
+                  ~@content
+                  "</" tag# ">")))
+        (get c-runtime/void-tags tag)
+        `(str ~(str "<" tag) ~(compile-attrs dynamic attrs) " />")
+        :else
+        `(str "<" ~tag ~(compile-attrs dynamic attrs) ">"
+             ~@content
+             ~(str "</" tag ">"))))
+    (map? x) `(cljs.core/js-obj
+               ~@(interleave (map name (keys x))
+                             (map util/escape-string (vals x))))
+    (instance? DynamicLeaf x) `(runtime/form->string
+                                ~(get-dynamic-form dynamic x))
+    :else (util/escape-string x)))
 
-(defmulti compile-element
-  {:private true}
-  c-comp/element-compile-strategy)
-
-(defmethod compile-element ::c-comp/all-literal
-  [element]
-  (let [[tag attrs content] (c-comp/normalize-element element)]
-    (if (get c-runtime/void-tags tag)
-      `(str "<" ~tag ~(compile-attrs attrs) " />")
-      `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
-            ~@(compile-seq content)
-            ~(str "</" tag ">")))))
+(defmacro compile-string [forms]
+  (let [[static dynamic]
+        (binding [c-comp/*dynamic-forms* []]
+          [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])]
+    (c-comp/walk-static c-comp/handle-void-tags
+                        (partial literal->string dynamic)
+                        static)))
 
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
   (h [:div])
   )
 
-(defmethod compile-element ::c-comp/literal-tag-and-literal-attributes
-  [element]
-  (let [[tag attrs content] (c-comp/normalize-element element)]
-    (if (get c-runtime/void-tags tag)
-      `(str "<" ~tag ~(compile-attrs attrs) " />")
-      `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
-            ~@(compile-seq content)
-            ~(str "</" tag ">")))))
-
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
   (h [:div {:e "e"}])
   )
-
-(defmethod compile-element ::c-comp/literal-tag-and-map-attributes
-  [[tag attrs & content]]
-  (let [[tag attrs _] (c-comp/normalize-element [tag attrs])]
-    (if (get c-runtime/void-tags tag)
-      `(str "<" ~tag ~(compile-attrs attrs) " />")
-      `(str ~(str "<" tag) ~(compile-attrs attrs) ">"
-            ~@(compile-seq content)
-            ~(str "</" tag ">")))))
 
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
   (let [e "ee"] (h [:div {:e e}]))
   )
 
-(defmethod compile-element ::c-comp/literal-tag-and-no-attributes
-  [[tag & content]]
-  (compile-element (apply vector tag {} content)))
-
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
   (let [e "ee"] (h [:div ^String e]))
   )
 
-(defmethod compile-element ::c-comp/literal-tag
-  [[tag attrs & content :as element]]
-  (let [[tag tag-attrs [first-content & rest-content :as content]]
-        (c-comp/normalize-element element)
-        attrs-sym (gensym "attrs")]
-    `(let [~attrs-sym ~first-content]
-       (if (map? ~attrs-sym)
-         ~(if (get c-runtime/void-tags tag)
-            `(str ~(str "<" tag)
-                  (runtime/render-attrs (c-runtime/merge-attributes
-                                         ~tag-attrs ~attrs-sym)) " />")
-            `(str ~(str "<" tag)
-                  (runtime/render-attrs (c-runtime/merge-attributes
-                                         ~tag-attrs ~attrs-sym)) ">"
-                  ~@(compile-seq rest-content)
-                  ~(str "</" tag ">")))
-         ~(if (get c-runtime/void-tags tag)
-            (str "<" tag (runtime/render-attrs tag-attrs) " />")
-            `(str ~(str "<" tag (runtime/render-attrs tag-attrs) ">")
-                  ~@(compile-seq content)
-                  ~(str "</" tag ">")))))))
-
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
-  (let [e "ee"] (h [:div e]))
-  (let [e {:e "e"}] (h [:div e]))
+  (binding [c-runtime/*attrs-or-first-child* nil]
+    (let [e "ee"] (h [:div e])))
+  (binding [c-runtime/*attrs-or-first-child* nil]
+    (let [e {:e "e"}] (h [:div e])))
   )
-
-(defmethod compile-element ::c-comp/literal-attributes
-  [[tag attrs & rest-content]]
-  `(let [tag# (name ~tag)]
-     (if (get c-runtime/void-tags tag#)
-       (str (str "<" tag#) ~(compile-attrs attrs) " />")
-       (str (str "<" tag#) ~(compile-attrs attrs) ">"
-            ~@(compile-seq rest-content)
-            (str "</" tag# ">")))))
 
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
   (let [e :p] (h [e {:e "e"}]))
   )
 
-(defmethod compile-element ::c-comp/map-attributes
-  [[tag attrs & rest-content]]
-  `(let [tag# (name ~tag)]
-     (if (get c-runtime/void-tags tag#)
-       (str (str "<" tag#) (runtime/render-attrs ~attrs) " />")
-       (str (str "<" tag#) (runtime/render-attrs ~attrs) ">"
-            ~@(compile-seq rest-content)
-            (str "</" tag# ">")))))
-
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
   (let [e :p f "e"] (h [e {:e f}]))
   )
 
-(defmethod compile-element ::c-comp/no-attributes
-  [[tag & content]]
-  (compile-element (apply vector tag {} content)))
 
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
@@ -157,34 +116,11 @@
   (let [e :p] (h [e]))
   )
 
-(defmethod compile-element :default
-  [[tag first-content & rest-content]]
-  `(let [tag# (name ~tag)
-         attrs# ~first-content]
-     (if (map? attrs#)
-       (if (get c-runtime/void-tags tag#)
-         (str "<" tag# (runtime/render-attrs attrs#) " />")
-         (str "<" tag# (runtime/render-attrs attrs#) ">"
-              ~@(compile-seq rest-content)
-              "</" tag# ">"))
-       (if (get c-runtime/void-tags tag#)
-         (str "<" tag# " />")
-         (str "<" tag# ">"
-              ~@(compile-seq (cons first-content rest-content))
-              "</" tag# ">")))))
-
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
-  (c-comp/element-compile-strategy '[a b])
-  (let [e :p f {:e "e"}] (h [e f]))
-  (let [e :p f "r"] (h [e f]))
-  )
-
-(defmacro compile-string [forms]
-  (c-comp/compile-dispatch forms []))
-
-
-(comment
-  (require '[ewen.inccup.compiler :refer [h]])
-  (h [:div])
+  (c-comp/element-compile-strategy '[a b] [])
+  (binding [c-runtime/*attrs-or-first-child* nil]
+    (let [e :p f {:e "e"}] (h [e f])))
+  (binding [c-runtime/*attrs-or-first-child* nil]
+    (let [e :p f "r"] (h [e f])))
   )
