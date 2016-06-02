@@ -45,38 +45,6 @@
     (instance? DynamicLeaf x) (.-index x)
     :else x))
 
-(defn handle-void-tags [x]
-  (if (vector? x)
-    (let [[tag attrs & children] x
-          m (meta x)]
-      (cond-> x
-        (get c-runtime/void-tags tag) (subvec 0 2)
-        m (with-meta m)))
-    x))
-
-(defn walk-static* [inner outer f form]
-  (let [transformed (inner form)]
-    (if (vector? transformed)
-      (let [[tag attrs & children] transformed
-            m (meta transformed)]
-        (cond-> (subvec transformed 0 2)
-          true (into (doall (map f children)))
-          m (with-meta m)
-          true outer))
-      (outer transformed))))
-
-(defn walk-static [inner outer static]
-  (walk-static* inner outer (partial walk-static inner outer) static))
-
-(comment
-  (literal->js '[:e.c {:class "c2"} "e"])
-
-  (walk-static
-   handle-void-tags literal->js
-   ["div" {:id "ii", :class "cc"} ["p" {} ["p2" {}]]
-    (c-comp/->DynamicLeaf 1)])
-  )
-
 (defn dynamic-form-with-tracked-vars
   [env tracked-vars {:keys [form type tag-attrs] :as dynamic-form}]
   (let [[expr used-vars] (track-vars env tracked-vars form)]
@@ -143,7 +111,8 @@
                    (recur (static-with-metas static update-path)
                           (rest dynamic))
                    static))
-        static (walk-static handle-void-tags literal->js static)
+        static (c-comp/walk-static
+                c-comp/handle-void-tags literal->js static)
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         id (swap! component-id inc)]
     `(ewen.inccup.incremental.vdom/->Component

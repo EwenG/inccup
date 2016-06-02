@@ -213,29 +213,33 @@ from an element name."
     (seq? expr) (compile-dynamic-expr expr path)
     :else (compile-dynamic-expr expr path)))
 
-#_(defn process-static [process-fn]
-  (fn [x]
-    (cond
-      (nil? x) (process-fn nil)
-      (string? x) x
-      (number? x) (str x)
-      (keyword? x) (name x)
-      (symbol? x) (str x)
-      (vector? x)
-      (let [update-paths (-> x meta :update-paths)
-            [tag attrs & content] x]
-        (if update-paths
-          `(ewen.inccup.incremental.vdom/array-with-path
-            ~(coll->js-array update-paths)
-            (cljs.core/array ~(literal->js tag)
-                             ~(literal->js attrs)
-                             ~@(map literal->js content)))
-          `(cljs.core/array ~(literal->js tag)
-                            ~(literal->js attrs)
-                            ~@(map literal->js content))))
-      (map? x) `(cljs.core/js-obj
-                 ~@(interleave (map name (keys x))
-                               (map literal->js (vals x))))
-      (instance? DynamicLeaf x) (.-index x)
-      :else (throw (IllegalArgumentException.
-                    (str "Not a literal element: " x))))))
+(defn handle-void-tags [x]
+  (if (vector? x)
+    (let [[tag attrs & children] x
+          m (meta x)]
+      (cond-> x
+        (get runtime/void-tags tag) (subvec 0 2)
+        m (with-meta m)))
+    x))
+
+(defn walk-static* [inner outer f form]
+  (let [transformed (inner form)]
+    (if (vector? transformed)
+      (let [[tag attrs & children] transformed
+            m (meta transformed)]
+        (cond-> (subvec transformed 0 2)
+          true (into (doall (map f children)))
+          m (with-meta m)
+          true outer))
+      (outer transformed))))
+
+(defn walk-static [inner outer static]
+  (walk-static* inner outer (partial walk-static inner outer) static))
+
+(comment
+
+  (walk-static
+   handle-void-tags identity
+   ["div" {:id "ii", :class "cc"} ["p" {} ["p2" {}]]
+    (->DynamicLeaf 1)])
+  )
