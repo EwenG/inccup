@@ -23,9 +23,7 @@
 
 (defn literal->js [x]
   (cond
-    (number? x) (str x)
-    (keyword? x) (name x)
-    (symbol? x) (str x)
+    (keyword? x) (literal->js (name x))
     (vector? x)
     (let [update-paths (-> x meta :update-paths)
           [tag attrs & content] x]
@@ -42,7 +40,7 @@
                ~@(interleave (map name (keys x))
                              (vals x)))
     (instance? DynamicLeaf x) (.-index x)
-    :else x))
+    :else (str x)))
 
 (defn dynamic-form-with-tracked-vars
   [env tracked-vars {:keys [form] :as dynamic-form}]

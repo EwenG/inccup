@@ -132,7 +132,7 @@
 (defn def1 [x] #h [:div#ii.cc {} x])
 (defn def2 [x y z] #h [x y z])
 (defn def3 [x] #h [:div#ii.cc x])
-(defn def4 [] #h [:div "content"])
+(defn def4 [] #h [:div "<content"])
 (defn def5 [x] #h [x "content"])
 
 (comment

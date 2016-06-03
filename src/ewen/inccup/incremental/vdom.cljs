@@ -495,7 +495,8 @@
   (.insertBefore
    parent (.createComment js/document "inccup/text-start") next-node)
   (.insertBefore
-   parent (.createTextNode js/document data) next-node)
+   parent (.createTextNode js/document data)
+   next-node)
   (.insertBefore
    parent (.createComment js/document "inccup/text-end") next-node)
   next-node)
@@ -615,10 +616,10 @@
     (if (string? prev-element)
       (if (= prev-element (str element))
         (skip-text-node node)
-        (set-text-node parent node (str element)))
+        (set-text-node parent node (util/escape-string element)))
       (do
         (aset prev-forms index (str element))
-        (create-text-node parent node (str element))
+        (create-text-node parent node (util/escape-string element))
         (delete-prev-element parent node prev-element parent-comp)))))
 
 (defn create-comp-elements

@@ -68,7 +68,6 @@
 
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
-  (h [:div {} "e" (h [:p])])
   )
 
 (comment
