@@ -4,6 +4,8 @@
             [ewen.inccup.common.util
              :refer [name-with-attributes cljs-env?
                      default-output-format *output-mode*]]
+            [clojure.spec :as spec]
+            [ewen.inccup.common.spec]
             [cljs.tagged-literals :refer [*cljs-data-readers*]]))
 
 (defn default-output-mode [env]
@@ -41,39 +43,32 @@
 (defn compile-dispatch
   ([forms]
    (compile-dispatch forms nil))
-  ([forms {:keys [output-mode]}]
-   {:pre [(or (nil? output-mode)
-              (= :string output-mode)
-              (= :incremental output-mode))
-          (vector? forms)]}
+  ([forms {:keys [::output-mode]}]
+   {:pre [(vector? forms)]}
    (if (or (= :string output-mode)
            (= :string *output-mode*))
      `(compile-string ~forms)
      `(component ~forms))))
 
-(defn compile-dispatch-string
+(defmacro h
   ([forms]
-   (compile-dispatch forms {:output-mode :string}))
-  ([forms {:keys [output-mode] :as opts}]
-   {:pre [(or (nil? output-mode)
-              (= :string output-mode))]}
-   (compile-dispatch forms (assoc opts :output-mode :string))))
+   (if (cljs-env? &env)
+     (compile-dispatch forms {})
+     (compile-dispatch forms {::output-mode :string})))
+  ([forms {:keys [::output-mode] :as opts}]
+   {:pre [(if (and (cljs-env? &env) output-mode)
+            (spec/valid? ::string-output-mode output-mode)
+            true)]}
+   (prn (spec/valid? ::string-output-mode output-mode))
+   (if (cljs-env? &env)
+     (compile-dispatch forms opts)
+     (compile-dispatch forms (assoc opts ::output-mode :string)))))
 
 (defmacro register-tagged-literal! [sym]
   (alter-var-root #'*cljs-data-readers* assoc sym compile-dispatch)
   (alter-var-root #'*data-readers* assoc sym compile-dispatch-string)
   (set! *data-readers* (assoc *data-readers* sym compile-dispatch-string))
   `'~sym)
-
-(defmacro h
-  ([forms]
-   (if (cljs-env? &env)
-     (compile-dispatch forms nil)
-     (compile-dispatch-string forms nil)))
-  ([forms opts]
-   (if (cljs-env? &env)
-     (compile-dispatch forms opts)
-     (compile-dispatch-string forms opts))))
 
 (comment
   (register-tagged-literal! h)
