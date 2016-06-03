@@ -1,7 +1,12 @@
 (ns ewen.inccup.string.runtime
-  (:require [ewen.inccup.common.util :as util
-             #?@(:cljs [:refer [RawString]])])
-  #?(:clj (:import [ewen.inccup.common.util RawString])))
+  (:require [ewen.inccup.common.util :as util]))
+
+(deftype InccupString [^String s]
+  Object
+  (^String toString [this] s)
+  (^boolean equals [this other]
+   (and (instance? InccupString other)
+        (= s (.toString other)))))
 
 (defn- attribute [k v]
   (str " " (name k) "=\"" (util/escape-string v) "\""))
@@ -16,8 +21,11 @@
   [attrs]
   (apply str (map render-attr attrs)))
 
+(defn wrap-text [text]
+  (str "<!--inccup/text-start-->" text "<!--inccup/text-end-->"))
+
 (defn form->string [form]
   (cond
-    (instance? RawString form) (str form)
+    (instance? InccupString form) (str form)
     (seq? form) (apply str (map form->string form))
-    :else (util/escape-string form)))
+    :else (-> form util/escape-string wrap-text)))

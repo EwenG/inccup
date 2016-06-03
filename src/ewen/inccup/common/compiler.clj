@@ -1,6 +1,6 @@
 (ns ewen.inccup.common.compiler
   (:require [clojure.string :as str]
-            [ewen.inccup.common.runtime :as runtime]))
+            [ewen.inccup.common.runtime :as c-runtime]))
 
 (def ^:dynamic *dynamic-forms* nil)
 
@@ -71,7 +71,7 @@ from an element name."
                                     (str/replace ^String class "." " "))))
         map-attrs        (first content)]
     (if (map? map-attrs)
-      [tag (runtime/merge-attributes tag-attrs map-attrs) (next content)]
+      [tag (c-runtime/merge-attributes tag-attrs map-attrs) (next content)]
       [tag tag-attrs content])))
 
 (defn update-dynamic-forms [expr path]
@@ -133,7 +133,7 @@ from an element name."
 (defmethod compile-element ::all-literal
   [element path]
   (let [[tag attrs content] (normalize-element element)]
-    (into [(name tag) attrs] content)))
+    (into [(name tag) attrs] (compile-seq content path 2))))
 
 (defmethod compile-element ::literal-tag-and-literal-attributes
   [[tag attrs & content] path]
@@ -214,7 +214,7 @@ from an element name."
     (let [[tag attrs & children] x
           m (meta x)]
       (cond-> x
-        (get runtime/void-tags tag) (subvec 0 2)
+        (get c-runtime/void-tags tag) (subvec 0 2)
         m (with-meta m)))
     x))
 

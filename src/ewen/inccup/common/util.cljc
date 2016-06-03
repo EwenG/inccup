@@ -101,17 +101,6 @@
              (if (instance? Uri other)
                (= (str this) (str other)) false))))
 
-(deftype RawString [^String s]
-  Object
-  (^String toString [this] s))
-
-(defn raw-string
-  "Wraps a string to an object that will be pasted to HTML without
-  escaping"
-  ([] (RawString. ""))
-  ([x] (RawString. x))
-  ([x & xs] (RawString. (apply str x xs))))
-
 (defn escape-string
   "Change special characters into HTML character entities."
   [text]

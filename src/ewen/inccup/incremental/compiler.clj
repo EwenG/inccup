@@ -2,7 +2,6 @@
   (:require [ewen.inccup.incremental.emitter :as emitter]
             [ewen.inccup.common.util :as util]
             [ewen.inccup.common.compiler :as c-comp]
-            [ewen.inccup.common.runtime :as c-runtime]
             [cljs.analyzer.api :as ana-api]
             [clojure.walk :refer [postwalk]]
             [clojure.set :refer [union]]

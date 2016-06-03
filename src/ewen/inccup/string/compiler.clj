@@ -5,26 +5,8 @@
             [ewen.inccup.common.compiler :as c-comp]
             [ewen.inccup.string.runtime :as runtime])
   (:import [clojure.lang IPersistentVector ISeq Named]
-           [ewen.inccup.common.compiler DynamicLeaf]))
-
-(deftype RawString [^String s]
-  Object
-  (^String toString [this] s)
-  (^boolean equals [this other]
-   (and (instance? RawString other)
-        (= s  (.toString other)))))
-
-(defn raw-string
-  "Wraps a string to an object that will be pasted to HTML without
-  escaping."
-  ([] (RawString. ""))
-  ([x] (RawString. x))
-  ([x & xs] (RawString. (apply str x xs))))
-
-(defn raw-string?
-  "Returns true if x is a RawString"
-  [x]
-  (instance? RawString x))
+           [ewen.inccup.common.compiler DynamicLeaf]
+           [ewen.inccup.string.runtime InccupString]))
 
 (defn get-dynamic-form [dynamic dyn-leaf]
   (->> (.-index dyn-leaf)
@@ -36,10 +18,25 @@
     `(runtime/render-attrs ~(get-dynamic-form dynamic attrs))
     (runtime/render-attrs attrs)))
 
+(declare collapse-strings)
+
+(defn collapse-reducer [collapsed form]
+  (if (string? form)
+    (let [last-collapsed (peek collapsed)]
+      (if (string? last-collapsed)
+        (conj (pop collapsed) (str last-collapsed form))
+        (conj collapsed form)))
+    (if (= 'clojure.core/str (first form))
+      (reduce collapse-reducer collapsed (collapse-strings (rest form)))
+      (conj collapsed form))))
+
+(defn collapse-strings [forms]
+  (reduce collapse-reducer [] forms))
+
 (defn literal->string [dynamic x]
   (cond
-    (instance? RawString x) (str x)
-    (keyword? x) (util/escape-string (name x))
+    (instance? InccupString x) (str x)
+    (keyword? x) (literal->string (name x))
     (vector? x)
     (let [[tag attrs & content] x]
       (cond
@@ -54,26 +51,24 @@
         `(str ~(str "<" tag) ~(compile-attrs dynamic attrs) " />")
         :else
         `(str "<" ~tag ~(compile-attrs dynamic attrs) ">"
-             ~@content
-             ~(str "</" tag ">"))))
-    (map? x) `(cljs.core/js-obj
-               ~@(interleave (map name (keys x))
-                             (map util/escape-string (vals x))))
+              ~@content
+              ~(str "</" tag ">"))))
     (instance? DynamicLeaf x) `(runtime/form->string
                                 ~(get-dynamic-form dynamic x))
-    :else (util/escape-string x)))
+    :else (-> x util/escape-string runtime/wrap-text)))
 
 (defmacro compile-string [forms]
   (let [[static dynamic]
         (binding [c-comp/*dynamic-forms* []]
-          [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])]
-    (c-comp/walk-static c-comp/handle-void-tags
-                        (partial literal->string dynamic)
-                        static)))
+          [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])
+        compiled (c-comp/walk-static c-comp/handle-void-tags
+                                     (partial literal->string dynamic)
+                                     static)]
+    `(runtime/->InccupString (str ~@(collapse-strings (rest compiled))))))
 
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
-  (h [:div])
+  (h [:div {} "e" (h [:p])])
   )
 
 (comment
@@ -88,7 +83,7 @@
 
 (comment
   (require '[ewen.inccup.compiler :refer [h]])
-  (let [e "ee"] (h [:div ^String e]))
+  (let [e "ee"] (h [:div ^String e "t"]))
   )
 
 (comment
