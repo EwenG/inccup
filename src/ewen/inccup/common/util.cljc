@@ -6,21 +6,8 @@
                    [java.net URLEncoder])
      :cljs (:import [goog Uri])))
 
-
-;; One must use a side effectful macro in order to modify the root value
-;; from clojurescript
-(def ^:dynamic *output-mode* nil)
 (def ^:dynamic *html-mode* :xhtml)
 (def ^:dynamic *base-url* nil)
-
-#?(:clj (defn cljs-env?
-          "Take the &env from a macro, and tell whether we are expanding
-  into cljs."
-          [env]
-          (boolean (:ns env))))
-
-#?(:clj (defn default-output-format [env]
-          (if (cljs-env? env) :incremental :string)))
 
 (defprotocol ToString
   #?(:clj (^String to-str [x] "Convert a value into a string.")

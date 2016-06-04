@@ -2,14 +2,31 @@
   (:require [ewen.inccup.string.compiler :refer [compile-string]]
             [ewen.inccup.incremental.compiler :refer [component]]
             [ewen.inccup.common.util
-             :refer [name-with-attributes cljs-env?
-                     default-output-format *output-mode*]]
+             :refer [name-with-attributes]]
             [clojure.spec :as spec]
-            [ewen.inccup.common.spec]
             [cljs.tagged-literals :refer [*cljs-data-readers*]]))
 
-(defn default-output-mode [env]
-  (if (cljs-env? env) :incremental :string))
+;; Options specs
+(spec/def ::string-output-mode #(= :string %))
+(spec/def ::output-mode #{:string :incremental})
+(spec/def ::options (spec/keys :opt [::output-mode]))
+
+(spec/fdef comp/h
+           :args (spec/alt :no-option ::spec/any
+                           :with-options (spec/cat
+                                          :forms ::spec/any
+                                          :options ::options)))
+
+(def ^:dynamic *clj-output-mode* :string)
+;; One must use a side effectful macro in order to modify the root value
+;; from clojurescript
+(def ^:dynamic *cljs-output-mode* :incremental)
+
+(defn cljs-env?
+  "Take the &env from a macro, and tell whether we are expanding
+  into cljs."
+  [env]
+  (boolean (:ns env)))
 
 #_(defn options-with-content [options-content env]
   (let [[options content] (if (map? (first options-content))
@@ -40,34 +57,42 @@
   (assert (or (nil? level) (and (number? level) (> level 0))))
   `(ewen.inccup.incremental.vdom/set-opts ~comp ~(map->js-obj opts)))
 
-(defn compile-dispatch
+(defn compile-dispatch-cljs
   ([forms]
-   (compile-dispatch forms nil))
-  ([forms {:keys [::output-mode]}]
+   (compile-dispatch-cljs forms {::output-mode *cljs-output-mode*}))
+  ([forms opts]
    {:pre [(vector? forms)]}
-   (if (or (= :string output-mode)
-           (= :string *output-mode*))
-     `(compile-string ~forms)
-     `(component ~forms))))
+   (let [opts (if-not (contains? opts ::output-mode)
+                (assoc opts ::output-mode *cljs-output-mode*)
+                opts)
+         {:keys [::output-mode] :as opts} (spec/conform ::options opts)]
+     (assert (not= ::spec/invalid opts))
+     (case output-mode
+       :string `(compile-string ~forms)
+       :incremental `(component ~forms)))))
+
+(defn compile-dispatch-clj
+  ([forms]
+   (compile-dispatch-clj forms {::output-mode *clj-output-mode*}))
+  ([forms {:keys [::output-mode] :or {::output-mode *clj-output-mode*}}]
+   {:pre [(vector? forms)
+          (spec/valid? ::string-output-mode output-mode)]}
+   `(compile-string ~forms)))
 
 (defmacro h
   ([forms]
    (if (cljs-env? &env)
-     (compile-dispatch forms {})
-     (compile-dispatch forms {::output-mode :string})))
-  ([forms {:keys [::output-mode] :as opts}]
-   {:pre [(if (and (cljs-env? &env) output-mode)
-            (spec/valid? ::string-output-mode output-mode)
-            true)]}
-   (prn (spec/valid? ::string-output-mode output-mode))
+     (compile-dispatch-cljs forms)
+     (compile-dispatch-clj forms)))
+  ([forms opts]
    (if (cljs-env? &env)
-     (compile-dispatch forms opts)
-     (compile-dispatch forms (assoc opts ::output-mode :string)))))
+     (compile-dispatch-cljs forms opts)
+     (compile-dispatch-clj forms opts))))
 
 (defmacro register-tagged-literal! [sym]
-  (alter-var-root #'*cljs-data-readers* assoc sym compile-dispatch)
-  (alter-var-root #'*data-readers* assoc sym compile-dispatch-string)
-  (set! *data-readers* (assoc *data-readers* sym compile-dispatch-string))
+  (alter-var-root #'*cljs-data-readers* assoc sym compile-dispatch-cljs)
+  (alter-var-root #'*data-readers* assoc sym compile-dispatch-clj)
+  (set! *data-readers* (assoc *data-readers* sym compile-dispatch-clj))
   `'~sym)
 
 (comment

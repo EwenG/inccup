@@ -3,20 +3,6 @@
             #?(:clj [clojure.spec :as spec]
                :cljs [cljs.spec :as spec])))
 
-
-;; Options
-(spec/def ::comp/string-output-mode #(= :string %))
-(spec/def ::comp/output-mode #{:string :incremental})
-(spec/def ::comp/options (spec/keys :opt [::comp/output-mode]))
-
-(spec/fdef comp/h
-           :args (spec/alt :no-option ::spec/any
-                           :with-options (spec/cat
-                                          :forms ::spec/any
-                                          :options ::comp/options)))
-
-#?(:clj (spec/instrument #'comp/h))
-
 ;;Inccup forms
 
 (defn map-with-only-keyword-keys? [m]
