@@ -1,8 +1,8 @@
 (ns ewen.inccup.compiler
   (:require [ewen.inccup.string.compiler :refer [compile-string]]
             [ewen.inccup.incremental.compiler :refer [component]]
-            [ewen.inccup.common.util
-             :refer [name-with-attributes]]
+            [ewen.inccup.common.util :refer [name-with-attributes]]
+            [ewen.inccup.common.runtime :as c-runtime]
             [clojure.spec :as spec]
             [cljs.tagged-literals :refer [*cljs-data-readers*]]))
 
@@ -58,9 +58,9 @@
   `(ewen.inccup.incremental.vdom/set-opts ~comp ~(map->js-obj opts)))
 
 (defn compile-dispatch-cljs
-  ([forms]
-   (compile-dispatch-cljs forms {::output-mode *cljs-output-mode*}))
-  ([forms opts]
+  ([env forms]
+   (compile-dispatch-cljs env forms {::output-mode *cljs-output-mode*}))
+  ([env forms opts]
    {:pre [(vector? forms)]}
    (let [opts (if-not (contains? opts ::output-mode)
                 (assoc opts ::output-mode *cljs-output-mode*)
@@ -68,8 +68,8 @@
          {:keys [::output-mode] :as opts} (spec/conform ::options opts)]
      (assert (not= ::spec/invalid opts))
      (case output-mode
-       :string `(compile-string ~forms)
-       :incremental `(component ~forms)))))
+       :string (compile-string forms)
+       :incremental (component env forms)))))
 
 (defn compile-dispatch-clj
   ([forms]
@@ -77,16 +77,17 @@
   ([forms {:keys [::output-mode] :or {::output-mode *clj-output-mode*}}]
    {:pre [(vector? forms)
           (spec/valid? ::string-output-mode output-mode)]}
-   `(compile-string ~forms)))
+   `(binding [c-runtime/*attrs-or-first-child* nil]
+      ~(compile-string forms))))
 
 (defmacro h
   ([forms]
    (if (cljs-env? &env)
-     (compile-dispatch-cljs forms)
+     (compile-dispatch-cljs &env forms)
      (compile-dispatch-clj forms)))
   ([forms opts]
    (if (cljs-env? &env)
-     (compile-dispatch-cljs forms opts)
+     (compile-dispatch-cljs &env forms opts)
      (compile-dispatch-clj forms opts))))
 
 (defmacro register-tagged-literal! [sym]

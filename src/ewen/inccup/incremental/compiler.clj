@@ -73,8 +73,8 @@
 (defn form-with-var-dep [var-deps-sym index form]
   `(when (cljs.core/aget ~var-deps-sym ~index) ~form))
 
-(defmacro component [forms]
-  (let [params (->> (:locals &env)
+(defn component [env forms]
+  (let [params (->> (:locals env)
                     (filter (comp not :local second))
                     (filter (comp not :fn-var second)))
         tracked-vars (loop [tracked-vars {}
@@ -90,7 +90,7 @@
         (binding [c-comp/*dynamic-forms* []]
           [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])
         dynamic (dynamic-forms-with-tracked-vars
-                 &env tracked-vars dynamic)
+                 env tracked-vars dynamic)
         static (loop [static static
                       dynamic dynamic]
                  (if-let [update-path (first dynamic)]
