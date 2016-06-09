@@ -33,7 +33,46 @@
 
 (defn array-with-path [path arr]
   (oset arr "inccup/update-paths" path)
+  (let [current-next (aget arr "inccup/next")
+        prev-arr (volatile! nil)]
+    (goog.array/forEach
+     arr (fn [item index arr]
+           (when (array? item)
+             (when @prev-arr
+               (goog.object/set @prev-arr "inccup/next" item))
+             (vreset! prev-arr item))))
+    (when @prev-arr
+      (goog.object/set @prev-arr "inccup/next" current-next)))
   arr)
+
+(defn tree-with-parents [tree]
+  (goog.array/forEach
+   tree (fn [item index _]
+          (when (array? item)
+            (goog.object/set item "inccup/parent" tree)
+            (goog.object/set item "inccup/parent-index" (inc index))
+            (tree-with-parents item))))
+  tree)
+
+(comment
+  (let [root (tree-with-parents #js [#js ["p" {} 3
+                                          #js ["div" {} #js ["p2" {}]]
+                                          "t"
+                                          #js ["p3" {}]]])]
+    (loop [current (aget root 0)
+           index 2]
+      (prn (aget current index))
+      (cond
+        (identical? root current)
+        nil
+        (>= index (.-length current))
+        (recur (goog.object/get current "inccup/parent")
+               (goog.object/get current "inccup/parent-index"))
+        (array? (aget current index))
+        (recur (aget current index) 2)
+        :else
+        (recur current (inc index)))))
+  )
 
 (defn aget-in [arr path count index]
   (if (< index count)
@@ -332,8 +371,7 @@
         false)
       true)))
 
-(deftype Component
-    [id static params var-deps ^:mutable forms]
+(deftype Component [id static params var-deps ^:mutable forms]
   IDeref
   (-deref [_] forms))
 

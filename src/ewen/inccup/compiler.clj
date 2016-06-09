@@ -90,10 +90,13 @@
      (compile-dispatch-cljs &env forms opts)
      (compile-dispatch-clj forms opts))))
 
+(defn tagged-literal->h [form]
+  `(h ~form))
+
 (defmacro register-tagged-literal! [sym]
-  (alter-var-root #'*cljs-data-readers* assoc sym compile-dispatch-cljs)
-  (alter-var-root #'*data-readers* assoc sym compile-dispatch-clj)
-  (set! *data-readers* (assoc *data-readers* sym compile-dispatch-clj))
+  (alter-var-root #'*cljs-data-readers* assoc sym tagged-literal->h)
+  (alter-var-root #'*data-readers* assoc sym tagged-literal->h)
+  (set! *data-readers* (assoc *data-readers* sym tagged-literal->h))
   `'~sym)
 
 (comment
