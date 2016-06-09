@@ -2,11 +2,13 @@
   (:require [ewen.inccup.compiler :as comp :refer [h]]
             [ewen.inccup.common.spec]
             [clojure.spec :as spec]
+            [clojure.test :refer [is]]
             [clojure.test.check :as tc]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
             [cljs.analyzer.api :as ana-api]
-            [cljs.compiler.api :as comp-api]))
+            [cljs.compiler.api :as comp-api]
+            [cljs.repl]))
 
 (def tag-name-gen
   (gen/fmap (fn [[f-char r-chars]]
@@ -22,28 +24,38 @@
                                      (gen/return\-)])))))
 
 (def keyword-gen (gen/one-of [gen/keyword gen/keyword-ns]))
+
 (def html-tag-gen
   (gen/elements
    #{:a :abbr :address :area :article :aside :audio :b :base :bdi :bdo
-     :big :blockquote :body :br :button :canvas :caption :cite :code :col
-     :colgroup :data :datalist :dd :del :details :dfn :dialog :div :dl :dt
+     :big :blockquote :br :button :canvas :cite :code
+     :data :datalist :dd :del :details :dfn :dialog :div :dl :dt
      :em :embed :fieldset :figcaption :figure :footer :form :h1 :h2 :h3 :h4
-     :h5 :h6 :head :header :hgroup :hr :html :i :iframe :img :input :ins
+     :h5 :h6 :header :hgroup :hr :i :img :input :ins
      :kbd :keygen :label :legend :li :link :main :map :mark :menu :menuitem
      :meta :meter :nav :noscript :object :ol :optgroup :option :output :p
      :param :picture :pre :progress :q :rp :rt :ruby :s :samp :script
-     :section :select :small :source :span :strong :style :sub :summary :sup
-     :table :tbody :td :textarea :tfoot :th :thead :time :title :tr :track
-     :u :ul :var :video :wbr}))
+     :section :small :source :span :strong :sub :summary :sup
+     :time :track :u :ul :var :video :wbr}))
+
+;;TODO handle textarea
+;;TODO handle iframe
+;;TODO handle select
+;;TODO handle table
+
+(def html-tags-with-context
+  #{:tfoot :thead :th :html :head :td :title :colgroup :caption :col :tr
+    :tbody :body :style :textarea :iframe :select :table})
 
 (defn make-tag-gen [tag-syms]
-  (if (empty? tag-syms)
-    (gen/one-of [tag-name-gen html-tag-gen])
-    (gen/one-of [tag-name-gen html-tag-gen
-                 (gen/elements tag-syms)])))
+  (->> (if (empty? tag-syms)
+         (gen/one-of [tag-name-gen html-tag-gen])
+         (gen/one-of [tag-name-gen html-tag-gen
+                      (gen/elements tag-syms)]))
+       (gen/such-that #(not (contains? html-tags-with-context %)))))
 
-(def attrs-gen (gen/map attr-name-gen gen/string))
-(def child-gen (gen/one-of [gen/string (gen/return nil)]))
+(def attrs-gen (gen/map attr-name-gen gen/string-ascii))
+(def child-gen (gen/one-of [gen/string-ascii (gen/return nil)]))
 (def child-seq-gen (gen/fmap (fn [children] `(list ~@children))
                              (gen/list child-gen)))
 
@@ -73,7 +85,7 @@
            {:max-elements 5}))
 
 (def attr-vals-gen
-  (gen/map syms-gen (gen/vector gen/string 1 20)
+  (gen/map syms-gen (gen/vector gen/string-ascii 1 20)
            {:max-elements 5}))
 
 (comment
@@ -100,12 +112,8 @@
        (fn [form]
          {:params params
           :form form
-          :string-clj `(apply
-                        (fn [~@tag-syms ~@attr-vals-syms]
-                          (h ~form))
-                        [~@tag-vals ~@attr-vals-vals])
-          :string-cljs
-          (binding [comp/*cljs-output-mode* :string]
+          #_:string-fn-cljs
+          #_(binding [comp/*cljs-output-mode* :string]
             (comp-api/emit
              (ana-api/no-warn
               (ana-api/analyze
@@ -115,8 +123,8 @@
                    (h ~form))
                  [~@tag-vals ~@attr-vals-vals])
                {:optimizations :simple}))))
-          :component
-          (comp-api/emit
+          #_:component
+          #_(comp-api/emit
            (ana-api/no-warn
             (ana-api/analyze
              (assoc (ana-api/empty-env) :context :expr)
@@ -125,10 +133,93 @@
              {:optimizations :simple})))})
        (make-form-gen tag-gen)))))
 
-(def valid-form-prop
-  (prop/for-all [{:keys [form string-clj string-cljs component]}
-                 form-gen]
-                (spec/valid? ::comp/form form)))
+(defn eval-js [repl-env js]
+  (let [{:keys [status value]}
+        (cljs.repl/-evaluate repl-env "<cljs repl>" 1 js)]
+    (is (= :success status))
+    value))
+
+(defn compile-cljs [cljs-form]
+  (binding [cljs.analyzer/*cljs-ns* 'ewen.inccup.common.gen-client]
+    (comp-api/emit
+     (ana-api/no-warn
+      (ana-api/analyze
+       (assoc (ana-api/empty-env) :context :expr)
+       cljs-form
+       {:optimizations :simple})))))
+
+(defn gen-client-sym [sym]
+  (symbol "ewen.inccup.common.gen-client" (str sym)))
+
+(def gen-client-ns "ewen.inccup.common.gen-client")
+(def vdom-ns "ewen.inccup.incremental.vdom")
+
+(defn make-valid-form-prop [repl-env]
+  (prop/for-all
+   [{form :form {tags :tags attr-vals :attr-vals :as params} :params}
+    form-gen]
+   (spec/valid? ::comp/form form)
+   (let [tag-syms (keys tags)
+         attr-vals-syms (keys attr-vals)
+         tag-vals (vals tags)
+         attr-vals-vals (vals attr-vals)
+         compile-fn `(~'fn ~'x [~@tag-syms ~@attr-vals-syms]
+                      (h ~form))
+         string-clj (-> `(apply ~compile-fn
+                                [~@(map first tag-vals)
+                                 ~@(map first attr-vals-vals)])
+                        eval str)]
+
+     #_(eval-js repl-env
+                (compile-cljs
+                 `(def ~(gen-client-sym 'params) (quote ~params))))
+
+     ;; Def the string templating fn
+     (eval-js repl-env
+              (binding [comp/*cljs-output-mode* :string]
+                (compile-cljs
+                 `(set! ~(gen-client-sym 'string-fn-cljs) ~compile-fn))))
+
+     ;; Def the component fn
+     (eval-js repl-env
+              (with-redefs [comp/cljs-env? (constantly true)]
+                (compile-cljs
+                 `(set! ~(gen-client-sym 'component) ~compile-fn))))
+
+     ;; Check that the clojure generated string is equal to the cljs
+     ;; generated string for initial params
+     (is (= string-clj
+            (eval-js repl-env
+                     (compile-cljs
+                      `(apply ~(gen-client-sym 'string-fn-cljs)
+                              [~@(map first tag-vals)
+                               ~@(map first attr-vals-vals)])))))
+
+     ;; Render the clojure generated string for initial params
+     (eval-js repl-env
+              (compile-cljs
+               `(goog.object/set (~(symbol gen-client-ns "new-root-string"))
+                               "innerHTML" ~string-clj)))
+
+     ;; Render the clojurescript component for initial params
+     (eval-js repl-env
+              (compile-cljs
+               `(~(symbol vdom-ns "render!")
+                 (~(symbol gen-client-ns "new-root-comp"))
+                 ~(symbol gen-client-ns "component")
+                 ~@(map first tag-vals)
+                 ~@(map first attr-vals-vals))))
+
+
+     (= "true"
+        (eval-js repl-env
+                 (compile-cljs
+                  `(~(symbol gen-client-ns "roots-equal?")))))
+     #_(is (= "true"
+            (eval-js repl-env
+                     (compile-cljs
+                      `(~(symbol gen-client-ns "roots-equal?"))))))
+     #_true)))
 
 (comment
 
@@ -136,17 +227,8 @@
   (gen/sample attrs-gen)
   (gen/sample child-gen)
   (gen/sample html-tag-gen)
-  (last (map :string-clj (gen/sample form-gen 10)))
-  (last (map :component (gen/sample form-gen 10)))
-  (last (map :string-cljs (gen/sample form-gen 10)))
+  (gen/sample form-gen 10)
 
-  (tc/quick-check 10 valid-form-prop)
-
-  (loop [x (map :string-clj (gen/sample form-gen 10))]
-    (if-let [f (first x)]
-      (do
-        (prn f)
-        (eval f)
-        (recur (rest x)))
-      nil))
+  (require '[ewen.replique.server-cljs :refer [repl-env]])
+  (tc/quick-check 30 (gen/no-shrink (make-valid-form-prop repl-env)))
   )
