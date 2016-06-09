@@ -372,10 +372,10 @@
           (let [tag-arr #js ["<" tag]]
             (when-let [attr-name (oget attrs "name")]
               (.push
-               tag-arr " name=\"" (goog.string/htmlEscape attr-name) "\""))
+               tag-arr " name=\"" (util/escape-string attr-name) "\""))
             (when-let [attr-type (oget attrs "type")]
               (.push
-               tag-arr " type=\"" (goog.string/htmlEscape attr-type) "\""))
+               tag-arr " type=\"" (util/escape-string attr-type) "\""))
             (.push tag-arr ">")
             (.join tag-arr ""))
           tag)
@@ -608,7 +608,7 @@
           (do
             (aset prev-forms index inccup-seq)
             (delete-prev-element parent node prev-element parent-comp)))))
-    (nil? element)
+    (or (nil? element) (= "" (str element)))
     (do
       (aset prev-forms index nil)
       (delete-prev-element parent node prev-element parent-comp))
@@ -616,10 +616,10 @@
     (if (string? prev-element)
       (if (= prev-element (str element))
         (skip-text-node node)
-        (set-text-node parent node (util/escape-string element)))
+        (set-text-node parent node element))
       (do
         (aset prev-forms index (str element))
-        (create-text-node parent node (util/escape-string element))
+        (create-text-node parent node (str element))
         (delete-prev-element parent node prev-element parent-comp)))))
 
 (defn create-comp-elements

@@ -22,7 +22,9 @@
   (apply str (map render-attr attrs)))
 
 (defn wrap-text [text]
-  (str "<!--inccup/text-start-->" text "<!--inccup/text-end-->"))
+  (if (= "" text)
+    text
+    (str "<!--inccup/text-start-->" text "<!--inccup/text-end-->")))
 
 (defn form->string [form]
   (cond
