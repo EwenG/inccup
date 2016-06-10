@@ -25,12 +25,17 @@
   (cond
     (keyword? x) (literal->js (name x))
     (vector? x)
-    (let [[tag attrs & content] x]
-      `(cljs.core/array ~(if (instance? DynamicLeaf tag)
-                           (.-index tag)
-                           (clojure.string/upper-case (name tag)))
-                        ~(literal->js attrs)
-                        ~@content))
+    (let [update-paths (-> x meta :update-paths)
+          [tag attrs & content] x]
+      (if update-paths
+        `(ewen.inccup.incremental.vdom/array-with-path
+          ~(c-comp/coll->js-array update-paths)
+          (cljs.core/array ~(literal->js tag)
+                           ~(literal->js attrs)
+                           ~@content))
+        `(cljs.core/array ~(literal->js tag)
+                          ~(literal->js attrs)
+                          ~@content)))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
                              (vals x)))
@@ -84,9 +89,9 @@
         [static dynamic]
         (binding [c-comp/*dynamic-forms* []]
           [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])
-        #_dynamic #_(dynamic-forms-with-tracked-vars
+        dynamic (dynamic-forms-with-tracked-vars
                  env tracked-vars dynamic)
-        #_static #_(loop [static static
+        static (loop [static static
                       dynamic dynamic]
                  (if-let [update-path (first dynamic)]
                    (recur (static-with-metas static update-path)
@@ -94,19 +99,30 @@
                    static))
         static (c-comp/walk-static
                 c-comp/handle-void-tags literal->js static)
-        #_var-deps->indexes #_(partial var-deps->indexes
-                                       (keys tracked-vars))
+        var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         id (swap! component-id inc)]
-    `(ewen.inccup.incremental.vdom2/->Component
+    `(ewen.inccup.incremental.vdom/->Component
       ~id
       (cljs.core/or
        (goog.object/get
         (goog.object/get
          ewen.inccup.incremental.vdom/*globals* ~id nil) "static")
-       (ewen.inccup.incremental.vdom/tree-with-parents
-        (cljs.core/array ~static)))
+       ~static)
       ~(c-comp/coll->js-array (keys tracked-vars))
-      (fn [] (cljs.core/array ~@(map :form dynamic))))))
+      (cljs.core/or
+       (goog.object/get
+        (goog.object/get
+         ewen.inccup.incremental.vdom/*globals* ~id nil) "var-deps")
+       ~(->> dynamic (map :var-deps)
+             (map var-deps->indexes)
+             c-comp/coll->js-array))
+      ~(let [var-deps-sym (gensym "var-deps")]
+         `(fn [~var-deps-sym]
+            (cljs.core/array
+             ~@(->> dynamic
+                    (map :form)
+                    (map-indexed
+                     (partial form-with-var-dep var-deps-sym)))))))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars
