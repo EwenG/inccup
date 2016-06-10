@@ -97,7 +97,7 @@
         #_var-deps->indexes #_(partial var-deps->indexes
                                        (keys tracked-vars))
         id (swap! component-id inc)]
-    `(ewen.inccup.incremental.vdom2/->Component
+    `(ewen.inccup.incremental.component/->Component
       ~id
       (cljs.core/or
        (goog.object/get

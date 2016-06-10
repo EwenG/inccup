@@ -2,6 +2,7 @@
   (:require [ewen.inccup.incremental.vdom :as vdom
              :refer [oset oget *globals* keep-walking-path?
                      make-true-arr attrs->js attr-as-prop]]
+            [ewen.inccup.incremental.component :refer [Component]]
             [ewen.inccup.common.util :as util]
             [clojure.string :as str]
             [goog.object]
@@ -14,17 +15,20 @@
 (def ^:dynamic *current-vnode-index* nil)
 
 (def textual-context-tags
-  #{"a" "abbr" "b" "bdi" "bdo" "br" "cite" "code" "data" "dfn" "em" "i"
-    "kbd" "mark" "q" "rp" "rt" "rtc" "ruby" "s" "samp" "small" "span"
-    "strong" "sub" "sup" "time" "u" "var" "wbr" "del" "ins" "acronym"
-    "big" "blink" "strike" "tt" "xmp" "SAMP" "ABBR" "SUP" "S" "BDI" "BR"
-    "RTC" "SUB" "Q" "VAR" "INS" "EM" "STRIKE" "SMALL" "TT" "ACRONYM" "CITE"
-    "KBD" "RT" "DEL" "SPAN" "XMP" "BDO" "A" "TIME" "RUBY" "I" "B" "BIG"
-    "DFN" "RP" "BLINK" "U" "STRONG" "MARK" "DATA" "CODE" "WBR"})
-
-(deftype Component [id static params ^:mutable forms]
-  IDeref
-  (-deref [_] forms))
+  #js {"a" true "abbr" true "b" true "bdi" true "bdo" true "br" true
+       "cite" true "code" true "data" true "dfn" true "em" true "i" true
+       "kbd" true "mark" true "q" true "rp" true "rt" true "rtc" true
+       "ruby" true "s" true "samp" true "small" true "span" true
+       "strong" true "sub" true "sup" true "time" true "u" true "var" true
+       "wbr" true "del" true "ins" true "acronym" true "big" true
+       "blink" true "strike" true "tt" true "xmp" true "SAMP" true
+       "ABBR" true "SUP" true "S" true "BDI" true "BR" true "RTC" true
+       "SUB" true "Q" true "VAR" true "INS" true "EM" true "STRIKE" true
+       "SMALL" true "TT" true "ACRONYM" true "CITE" true "KBD" true
+       "RT" true "DEL" true "SPAN" true "XMP" true "BDO" true "A" true
+       "TIME" true "RUBY" true "I" true "B" true "BIG" true "DFN" true
+       "RP" true "BLINK" true "U" true "STRONG" true "MARK" true
+       "DATA" true "CODE" true "WBR" true})
 
 (defn create-dom [tag attrs children]
   (let [tag
@@ -98,12 +102,34 @@
   (set! *parent-node* *current-node*)
   (set! *current-node* (.-firstChild *parent-node*)))
 
+(defn next-node! []
+  (set! *current-node* (.-nextSibling *current-node*)))
+
 (defn patch-comp [prev-forms forms]
   (let [vnode (aget *current-vnode* *current-vnode-index*)]
     (cond
       (nil? vnode) (next-vnode!)
       (number? vnode) (next-vnode!)
-      (string? vnode) (next-vnode!)
+      (string? vnode)
+      (loop []
+        (if (nil? *current-node*)
+          (let [new-node (.createTextNode js/document vnode)]
+            (.appendChild *parent-node* new-node)
+            (next-vnode!))
+          (let [node-type (.-nodeType *current-node*)
+                node-name (.-nameName *current-node*)]
+            (cond (= 3 node-type)
+                  (do (next-vnode!) (next-node!))
+                  (or (goog.object/get textual-context-tags node-name)
+                      (= 8 node-type))
+                  (let [tmp-node *current-node*]
+                    (next-node!)
+                    (.removeChild *parent-node* tmp-node)
+                    (recur))
+                  :else
+                  (let [new-node (.createTextNode js/document vnode)]
+                    (.insertBefore *parent-node* new-node *current-node*)
+                    (next-vnode!))))))
       :else
       (let [tag (if (number? (first vnode))
                   (->> (first vnode) (aget forms) name str/upper-case)
@@ -112,21 +138,37 @@
             new-attrs (if (number? attrs)
                         (attrs->js (aget forms attrs))
                         attrs)]
-        (cond (nil? *current-node*)
-              (-> (create-dom tag attrs nil)
-                  (.appendChild *parent-node*))
+        (loop []
+          (if (nil? *current-node*)
+            (let [new-node (create-dom tag attrs nil)]
+              (.appendChild *parent-node* new-node)
+              (set! *current-node* new-node)
               (child-vnode! vnode)
-              (child-node!)
-              (and (= 1 (.-nodeType *current-node*))
-                   (= tag (.-nameName *current-node*)))
-              (do (child-vnode! vnode)
-                  (child-node!))
-              :else
-              (let [new-node (create-dom tag attrs nil)]
-                (.insertBefore *parent-node* new-node *current-node*)
-                (set! *current-node* new-node)
-                (child-vnode! vnode)
-                (child-node!)))))))
+              (child-node!))
+            (let [node-type (.-nodeType *current-node*)
+                  node-name (.-nameName *current-node*)]
+              (cond (and (= 1 node-type) (= tag node-name))
+                    (do (child-vnode! vnode) (child-node!))
+                    (or (goog.object/get textual-context-tags node-name)
+                        (= 8 node-type))
+                    (let [tmp-node *current-node*]
+                      (next-node!)
+                      (.removeChild *parent-node* tmp-node)
+                      (recur))
+                    :else
+                    (let [new-node (create-dom tag attrs nil)]
+                      (.insertBefore *parent-node* new-node *current-node*)
+                      (set! *current-node* new-node)
+                      (child-vnode! vnode)
+                      (child-node!))))))))))
+
+(defn clear-nodes []
+  (loop [last-child (.-lastChild *parent-node*)]
+    (when (not (identical? last-child *current-node*))
+      (.removeChild *parent-node* last-child)
+      (recur (.-lastChild *parent-node*))))
+  (when *current-node*
+    (.removeChild *parent-node* *current-node*)))
 
 (defn render! [node comp-fn & params]
   (binding [vdom/*globals* #js {}]
@@ -135,7 +177,7 @@
                  (apply comp-fn params))
           forms ((.-forms comp))
           root (.-static$ comp)]
-      (set! (.-forms comp) forms)
+      (oset comp "inccup/forms" forms)
       (binding [*parent-node* node
                 *current-node* (.-firstChild node)
                 *current-vnode* root
@@ -150,7 +192,7 @@
                 :else
                 (do (while (>= *current-vnode-index*
                                *current-vnode-length*)
-                      #_(clear-nodes)
+                      (clear-nodes)
                       (set! *current-vnode*
                             (oget *current-vnode* "inccup/parent"))
                       (set! *current-vnode-index*
@@ -159,12 +201,7 @@
                             (.-length *current-vnode*))
                       (set! *current-node* *parent-node*)
                       (set! *parent-node* (.-parentNode *parent-node*)))
-                    (recur))))
-
-        (while (not (identical? *current-vnode* root))
-          #_(prn *current-vnode*)
-          (patch-comp forms forms)
-          (next-vnode!)))
+                    (recur)))))
       (oset comp "inccup/globals" vdom/*globals*)
       #_(oset comp "inccup/node" new-node)
       comp)))

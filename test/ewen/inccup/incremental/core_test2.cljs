@@ -2,9 +2,8 @@
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.compiler
              :refer-macros [with-opts register-tagged-literal!]]
-            [ewen.inccup.incremental.vdom :as vdom :refer [Component]]
-            [ewen.inccup.incremental.vdom2 :as vdom2
-             :refer [render!]]
+            [ewen.inccup.incremental.vdom2 :as vdom2 :refer [render!]]
+            [ewen.inccup.incremental.component :refer [Component]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array]
             [goog.dom])
