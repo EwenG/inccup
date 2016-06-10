@@ -33,6 +33,16 @@
 
 (defn array-with-path [path arr]
   (oset arr "inccup/update-paths" path)
+  (let [current-next (aget arr "inccup/next")
+        prev-arr (volatile! nil)]
+    (goog.array/forEach
+     arr (fn [item index arr]
+           (when (array? item)
+             (when @prev-arr
+               (goog.object/set @prev-arr "inccup/next" item))
+             (vreset! prev-arr item))))
+    (when @prev-arr
+      (goog.object/set @prev-arr "inccup/next" current-next)))
   arr)
 
 (defn tree-with-parents [tree]
