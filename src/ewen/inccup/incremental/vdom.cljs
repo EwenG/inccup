@@ -422,7 +422,8 @@
      attrs (fn [v k o]
              (if-let [prop-name (attr-as-prop k)]
                (oset element prop-name (oget attrs k))
-               (.setAttribute element k (oget attrs k)))))
+               (.setAttribute element k (-> (oget attrs k)
+                                            util/escape-string)))))
     (when (and children (not void-tag?))
       (loop []
         (when-let [child (aget children 0)]
@@ -740,7 +741,7 @@
                (when (not= prev-v v)
                  (if-let [prop-name (attr-as-prop k)]
                    (oset node prop-name v)
-                   (.setAttribute node k v))
+                   (.setAttribute node k (util/escape-string v)))
                  (oset prev-attrs k v)))))
     (goog.object/forEach
      prev-attrs (fn [v k _]
