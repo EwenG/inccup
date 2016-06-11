@@ -371,7 +371,7 @@
         false)
       true)))
 
-(deftype Component [id static params var-deps ^:mutable forms]
+(deftype Component [id static params var-deps forms]
   IDeref
   (-deref [_] forms))
 
@@ -400,7 +400,7 @@
 
 ;; Same as goog.dom.createDom but set custom attributes as html attributes
 ;; instead of properties
-(defn create-dom [tag attrs children void-tag?]
+(defn create-dom [tag attrs children]
   (let [tag
         ;;IE
         (if (and
@@ -424,7 +424,7 @@
                (oset element prop-name (oget attrs k))
                (.setAttribute element k (-> (oget attrs k)
                                             util/escape-string)))))
-    (when (and children (not void-tag?))
+    (when children
       (loop []
         (when-let [child (aget children 0)]
           (.appendChild element child)
@@ -457,7 +457,8 @@
 (defn make-var-deps-arr [arr params prev-params var-deps]
   (loop [index 0]
     (when-let [indexes (aget var-deps index)]
-      (when (identical-params? prev-params params indexes)
+      (if (identical-params? prev-params params indexes)
+        (aset arr index false)
         (aset arr index true))
       (recur (inc index))))
   arr)
@@ -664,37 +665,35 @@
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
    Returns the created node"
-  [static forms parent-comp]
+  [static forms forms-fn parent-comp]
   (let [dynamic-tag? (number? (first static))
         tag (if dynamic-tag?
-              (->> (first static) (aget forms) name
+              (->> (first static) forms-fn name
                    (aset forms (first static)))
               (first static))
-        void-tag? (and dynamic-tag? (get c-runtime/void-tags tag))
         attrs (if (number? (second static))
-                (->> (second static) (aget forms) attrs->js
+                (->> (second static) forms-fn attrs->js
                      (aset forms (second static)))
                 (second static))]
-    (let [new-node (create-dom tag attrs nil void-tag?)
+    (let [new-node (create-dom tag attrs nil)
           l (count static)]
-      (when (not void-tag?)
-        (loop [index 2]
-          (when (< index l)
-            (let [child (aget static index)]
-              (cond
-                (nil? child)
-                nil
-                (number? child)
-                (let [form (aget forms child)]
-                  (diff-children new-node nil nil form forms child
-                                 parent-comp))
-                (string? child)
-                (diff-children new-node nil nil child forms child
-                               parent-comp)
-                :else
-                (->> (create-comp-elements child forms parent-comp)
-                     (.appendChild new-node))))
-            (recur (inc index)))))
+      (loop [index 2]
+        (when (< index l)
+          (let [child (aget static index)]
+            (cond
+              (nil? child)
+              nil
+              (number? child)
+              (diff-children new-node nil nil (forms-fn child) forms
+                             child parent-comp)
+              (string? child)
+              (diff-children new-node nil nil child
+                             forms child parent-comp)
+              :else
+              (->> (create-comp-elements child forms forms-fn
+                                         parent-comp)
+                   (.appendChild new-node))))
+          (recur (inc index))))
       new-node)))
 
 (defn keep-walking-path? [update-path var-deps-arr]
@@ -755,7 +754,7 @@
   "Walk a component. Updates dynamic parts of the component during the
   walk. `node` is the current node beeing walked. `parent` is its parent
   node. Returns the next sibling of `node`"
-  [parent node static var-deps-arr prev-forms forms parent-comp]
+  [parent node static var-deps-arr prev-forms forms-fn parent-comp]
   (cond
     (nil? static)
     node
@@ -764,7 +763,7 @@
     ;; child if the params it depends on did change.
     (let [prev-form (aget prev-forms static)]
       (if (aget var-deps-arr static)
-        (diff-children parent node prev-form (aget forms static)
+        (diff-children parent node prev-form (forms-fn static)
                        prev-forms static parent-comp)
         (cond (nil? prev-form) node
               (inccup-seq? prev-form) (walk-inccup-seq node prev-form)
@@ -778,28 +777,22 @@
               dynamic-tag? (number? tag)
               prev-tag (if dynamic-tag? (aget prev-forms tag) tag)
               new-tag (if (and dynamic-tag? (aget var-deps-arr tag))
-                        (name (aget forms tag))
+                        (name (forms-fn tag))
                         prev-tag)
-              void-tag? (and dynamic-tag?
-                             (get c-runtime/void-tags new-tag))
               attrs (second static)
               prev-attrs (if (number? attrs)
                            (aget prev-forms attrs)
                            attrs)
               new-attrs (if (and (number? attrs) (aget var-deps-arr attrs))
-                          (attrs->js (aget forms attrs))
+                          (attrs->js (forms-fn attrs))
                           prev-attrs)
               ;; If the tag did change, replace the current node by a
               ;; node of a new type and move the children of the old node
               ;; to the new one.
               maybe-new-node
               (if (not= prev-tag new-tag)
-                (-> (if (get c-runtime/void-tags prev-tag)
-                      (create-comp-elements static forms parent-comp)
-                      (create-dom new-tag new-attrs
-                                  (when node
-                                    (.-childNodes node))
-                                  void-tag?))
+                (-> (create-dom
+                     new-tag new-attrs (when node (.-childNodes node)))
                     (#(replace-or-append parent % node)))
                 node)
               l (count static)]
@@ -812,16 +805,15 @@
             (aset prev-forms tag new-tag))
           (when (not (identical? prev-attrs new-attrs))
             (aset prev-forms attrs new-attrs))
-          (when (not void-tag?)
-            (loop [child (when maybe-new-node
-                           (.-firstChild maybe-new-node))
-                   index 2]
-              (when (< index l)
-                (recur
-                 (update-comp-elements
-                  maybe-new-node child (aget static index)
-                  var-deps-arr prev-forms forms parent-comp)
-                 (inc index)))))
+          (loop [child (when maybe-new-node
+                         (.-firstChild maybe-new-node))
+                 index 2]
+            (when (< index l)
+              (recur
+               (update-comp-elements
+                maybe-new-node child (aget static index)
+                var-deps-arr prev-forms forms-fn parent-comp)
+               (inc index))))
           (next-sibling maybe-new-node))
         (next-sibling node)))))
 
@@ -832,10 +824,11 @@
   (let [opts (oget comp "inccup/opts")
         key (oget opts "key")
         level (when key (oget opts "level"))
-        var-deps-arr (-> (.-var-deps comp) count make-true-arr)
-        forms ((.-forms comp) var-deps-arr)
+        forms-fn (.-forms comp)
+        forms (-> (.-params comp) count make-array)
+        var-deps-arr (-> (.-params comp) count make-array)
         parent-comps []]
-    (set! (.-forms comp) forms)
+    (oset comp "inccup/forms" forms)
     (oset comp "inccup/var-deps-arr" var-deps-arr)
     (oset comp "inccup/parent-comp" parent-comp)
     (oset comp "inccup/keymap" (js-obj))
@@ -845,21 +838,22 @@
        parent-comp level register-comp-key
        key comp))
     (swap-count-global (.-id comp) inc)
-    (let [new-node (create-comp-elements (.-static$ comp) forms comp)]
+    (let [new-node (create-comp-elements
+                    (.-static$ comp) forms forms-fn comp)]
       (when key (oset comp "inccup/node" new-node))
       new-node)))
 
 (defn update-comp* [prev-comp comp parent node]
   (let [params (.-params comp)
         prev-params (.-params prev-comp)
-        prev-forms (.-forms prev-comp)
+        prev-forms (oget prev-comp "inccup/forms")
         var-deps-arr (oget prev-comp "inccup/var-deps-arr")
         var-deps-arr (->> (.-var-deps comp)
                           (make-var-deps-arr
                            var-deps-arr params prev-params))
-        forms ((.-forms comp) var-deps-arr)
+        forms-fn (.-forms comp)
         next-node (update-comp-elements parent node (.-static$ comp)
-                                        var-deps-arr prev-forms forms
+                                        var-deps-arr prev-forms forms-fn
                                         prev-comp)]
     (clean-comp-keys prev-comp)
     next-node))

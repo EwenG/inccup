@@ -43,12 +43,12 @@
         (instance? DynamicLeaf tag)
         `(str
           (let [tag# (name ~(get-dynamic-form dynamic tag))]
-            (if (get c-runtime/void-tags tag#)
+            (if (and (empty? content) (get runtime/void-tags tag#))
               (str "<" tag# ~(compile-attrs dynamic attrs) " />")
               (str "<" tag# ~(compile-attrs dynamic attrs) ">"
                    ~@content
                    "</" tag# ">"))))
-        (get c-runtime/void-tags tag)
+        (and (empty? content) (get runtime/void-tags tag))
         `(str ~(str "<" tag) ~(compile-attrs dynamic attrs) " />")
         :else
         `(str "<" ~tag ~(compile-attrs dynamic attrs) ">"

@@ -70,8 +70,8 @@
 (defn var-deps->indexes [params var-deps]
   (map #(.indexOf params %) var-deps))
 
-(defn form-with-var-dep [var-deps-sym index form]
-  `(when (cljs.core/aget ~var-deps-sym ~index) ~form))
+(defn indexed-identity [index form]
+  [index form])
 
 (defn component [env forms]
   (let [params (->> (:locals env)
@@ -116,13 +116,13 @@
        ~(->> dynamic (map :var-deps)
              (map var-deps->indexes)
              c-comp/coll->js-array))
-      ~(let [var-deps-sym (gensym "var-deps")]
-         `(fn [~var-deps-sym]
-            (cljs.core/array
-             ~@(->> dynamic
-                    (map :form)
-                    (map-indexed
-                     (partial form-with-var-dep var-deps-sym)))))))))
+      ~(let [var-deps-index-sym (gensym "var-deps-index")]
+         `(fn [~var-deps-index-sym]
+            (cljs.core/case ~var-deps-index-sym
+              ~@(->> dynamic
+                     (map :form)
+                     (map-indexed indexed-identity)
+                     (apply concat))))))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars

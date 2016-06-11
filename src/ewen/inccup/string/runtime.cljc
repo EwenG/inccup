@@ -1,6 +1,12 @@
 (ns ewen.inccup.string.runtime
   (:require [ewen.inccup.common.util :as util]))
 
+(def void-tags
+  "A list of elements that must be rendered without a
+  closing tag."
+  #{"area" "base" "br" "col" "command" "embed" "hr" "img" "input"
+    "keygen" "link" "meta" "param" "source" "track" "wbr"})
+
 (deftype InccupString [^String s]
   Object
   (^String toString [this] s)
