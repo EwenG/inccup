@@ -16,7 +16,7 @@
   (binding [*tracked-vars* tracked-vars]
     (let [cljs-expanded (-> env (ana-api/analyze expr) emitter/emit*)
           used-vars (keep #(when (:is-used %) (:symbol %))
-                          (vals tracked-vars))]
+                          (vals *tracked-vars*))]
       [cljs-expanded (set used-vars)])))
 
 (declare compile-html)
