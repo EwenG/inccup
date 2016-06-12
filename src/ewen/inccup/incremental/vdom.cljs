@@ -31,7 +31,7 @@
     (do (oset o "inccup/opts" new-opts)
         o)))
 
-(defn array-with-path [path arr]
+#_(defn array-with-path [path arr]
   (oset arr "inccup/update-paths" path)
   (let [current-next (aget arr "inccup/next")
         prev-arr (volatile! nil)]
@@ -371,7 +371,8 @@
         false)
       true)))
 
-(deftype Component [id static params var-deps forms]
+(deftype Component
+    [id static ^:mutable params var-deps forms count-dynamic]
   IDeref
   (-deref [_] forms))
 
@@ -421,7 +422,8 @@
     (goog.object/forEach
      attrs (fn [v k o]
              (if-let [prop-name (attr-as-prop k)]
-               (oset element prop-name (oget attrs k))
+               (oset element prop-name (-> (oget attrs k)
+                                           util/escape-string))
                (.setAttribute element k (-> (oget attrs k)
                                             util/escape-string)))))
     (when children
@@ -463,7 +465,7 @@
       (recur (inc index))))
   arr)
 
-(defn make-true-arr [size]
+#_(defn make-true-arr [size]
   (let [arr (make-array size)]
     (loop [index 0]
       (when (not= index size)
@@ -471,7 +473,7 @@
         (recur (inc index))))
     arr))
 
-(defn delete-text-node [parent node]
+#_(defn delete-text-node [parent node]
   (if (and node
            (= (.-nodeType node) 8)
            (= (.-nodeValue node) "inccup/text-start"))
@@ -486,7 +488,7 @@
                       (= (.-nodeValue node) "inccup/text-end"))))))
     node))
 
-(defn delete-prev-element [parent node prev-element parent-comp]
+#_(defn delete-prev-element [parent node prev-element parent-comp]
   (cond
     (instance? Component prev-element)
     (let [opts (oget prev-element "inccup/opts")
@@ -510,28 +512,80 @@
     :else ;; Text node
     (delete-text-node parent node)))
 
+(defn clean-component [comp parent-comp]
+  (let [opts (oget comp "inccup/opts")
+        key (oget opts "key")
+        level (when key (oget opts "level"))]
+    (when key (walk-parent-comps
+               parent-comp level remove-comp-key
+               key comp))))
+
+(declare maybe-clean-components)
+
+(defn pop-inccup-seq-from [prev-forms start-index length parent-comp]
+  (loop [index (dec length)]
+    (when (>= index start-index)
+      (maybe-clean-components (aget prev-forms index) parent-comp)
+      (.pop prev-forms)
+      (recur (dec index)))))
+
+(defn pop-nodes-from [dynamic-nodes start-index length]
+  (loop [index (dec length)]
+    (when (>= index start-index)
+      (let [prev-node (aget dynamic-nodes index)]
+        (if (array? prev-node)
+          (pop-nodes-from prev-node 0 (.-length prev-node))
+          (goog.dom/removeNode prev-node))
+        (.pop dynamic-nodes)
+        (recur (dec index))))))
+
+(defn replace-node
+  [element prev-forms index dynamic-nodes new-node parent-comp]
+  (let [prev-node (aget dynamic-nodes index)]
+    (maybe-clean-components
+     (aget prev-forms index) parent-comp)
+    (aset prev-forms index element)
+    (aset dynamic-nodes index new-node)
+    (if (array? prev-node)
+      (do
+        (replace-node (aget prev-node 0) new-node)
+        (pop-nodes-from prev-node 1 (.-length prev-node)))
+      (goog.dom/replaceNode new-node prev-node))))
+
+(defn remove-node [prev-node]
+  (if (array? prev-node)
+    (pop-nodes-from prev-node 0 (.-length prev-node))
+    (goog.dom/removeNode prev-node)))
+
+(defn parent-node [node]
+  (if (array? node)
+    (recur (aget node 0))
+    (.-parentNode node)))
+
+(defn maybe-clean-components [prev-element parent-comp]
+  (cond
+    (instance? Component prev-element)
+    (clean-component prev-element parent-comp)
+    (inccup-seq? prev-element)
+    (pop-inccup-seq-from prev-element 0 (.-length prev-element)
+                         parent-comp)))
+
 (declare create-comp*)
 (declare update-comp*)
 
 (defn inccup-seq []
   (doto #js [] (oset "inccup/seq" true)))
 
-(defn pop-inccup-seq-from [parent node x index parent-comp]
-  (let [l (count x)
-        next-node (loop [node node
-                         index index]
-                    (if (< index l)
-                      (recur (delete-prev-element
-                              parent node (aget x index) parent-comp)
-                             (inc index))
-                      node))]
-    (loop [index index]
-      (when (< index l)
-        (.pop x)
-        (recur (inc index))))
-    next-node))
+#_(defn pop-inccup-seq-from [parent node i-seq dyn-nodes
+                           start-index parent-comp]
+  (loop [index (.-length i-seq)]
+    (when (>= index start-index)
+      (goog.dom/removeElement (aget dyn-nodes index))
+      (.pop dyn-nodes)
+      (.pop i-seq)
+      (recur (dec index)))))
 
-(defn create-text-node [parent next-node data]
+#_(defn create-text-node [parent next-node data]
   (.insertBefore
    parent (.createComment js/document "inccup/text-start") next-node)
   (.insertBefore
@@ -541,7 +595,7 @@
    parent (.createComment js/document "inccup/text-end") next-node)
   next-node)
 
-(defn skip-text-node [node]
+#_(defn skip-text-node [node]
   ;; if node is a comment node representing the start of a text node
   (if (and node
            (= (.-nodeType node) 8)
@@ -554,7 +608,7 @@
         (recur (.-nextSibling node))))
     node))
 
-(defn set-text-node [parent node data]
+#_(defn set-text-node [parent node data]
   (if (or (nil? node)
           (not= (.-nodeType node) 8)
           (not= (.-nodeValue node) "inccup/text-start"))
@@ -577,8 +631,35 @@
               (.removeChild parent node)
               (recur next-node text-set))))))
 
+(defn create-dynamic [parent element prev-forms index
+                      dynamic-nodes parent-comp]
+  (cond
+    (instance? Component element)
+    (let [new-node (create-comp* element parent-comp)]
+      (.appendChild parent new-node)
+      (aset dynamic-nodes index new-node)
+      (aset prev-forms index element))
+    (seq? element)
+    (let [inccup-seq (inccup-seq)
+          nodes (make-array (count element))]
+      (loop [elements element
+             i 0]
+        (if-not (empty? elements)
+          (do
+            (create-dynamic parent (first elements) inccup-seq i
+                            nodes parent-comp)
+            (recur (rest elements) (inc i)))
+          (do
+            (aset prev-forms index inccup-seq)
+            (aset dynamic-nodes index nodes)))))
+    :else
+    (let [new-node (.createTextNode js/document (str element))]
+      (aset prev-forms index (str element))
+      (aset dynamic-nodes index new-node)
+      (.appendChild parent new-node))))
+
 (defn diff-children
-  [parent node prev-element element prev-forms index parent-comp]
+  [prev-element element prev-forms index dynamic-nodes parent-comp]
   (cond
     (instance? Component element)
     (let [opts (oget element "inccup/opts")
@@ -592,91 +673,92 @@
                         (oget "level")) level))
           (do
             (assert (= (.-id prev-element) (.-id element)))
-            (update-comp* prev-element element parent node))
-          (do
-            (if-let [moved-comp (walk-parent-comps
-                                 parent-comp level get-comp-by-key
-                                 key element)]
+            (update-comp* prev-element element))
+          (if-let [moved-comp (walk-parent-comps
+                               parent-comp level get-comp-by-key
+                               key element)]
+            (do
+              (assert (= (.-id moved-comp) (.-id element)))
               (let [moved-node (oget moved-comp "inccup/node")]
-                (assert (= (.-id moved-comp) (.-id element)))
-                (aset prev-forms index moved-comp)
+                (replace-node moved-comp prev-forms index dynamic-nodes
+                              moved-node parent-comp)
                 (walk-parent-comps
                  parent-comp level update-key-on-move key element)
                 (-> (oget moved-comp "inccup/opts")
                     (oset "level" level))
-                (.insertBefore parent moved-node node)
-                (update-comp* moved-comp element parent moved-node)
-                (delete-prev-element parent node prev-element parent-comp))
-              (do
-                (aset prev-forms index element)
-                (let [next-node  (delete-prev-element
-                                  parent node prev-element parent-comp)]
-                  (insert-before
-                   parent (create-comp* element parent-comp) next-node))))))
+                (update-comp* moved-comp element)))
+            (replace-node element prev-forms index dynamic-nodes
+                          (create-comp* element parent-comp)
+                          parent-comp)))
         (if (and (instance? Component prev-element)
                  (= (.-id prev-element) (.-id element)))
-          (update-comp* prev-element element parent node)
-          (do
-            (aset prev-forms index element)
-            (let [next-node (delete-prev-element
-                             parent node prev-element parent-comp)]
-              (insert-before
-               parent (create-comp* element parent-comp) next-node)
-              next-node)))))
+          (update-comp* prev-element element)
+          (replace-node element prev-forms index dynamic-nodes
+                        (create-comp* element parent-comp)
+                        parent-comp))))
     (seq? element)
     (if (inccup-seq? prev-element)
-      (loop [node node
-             elements element
-             i 0]
-        (if-not (empty? elements)
-          (let [e (first elements)
-                prev-e (aget prev-element i)]
-            (recur (diff-children parent node prev-e e prev-element
-                                  i parent-comp)
-                   (rest elements) (inc i)))
-          (if (< i (count prev-element))
-            (pop-inccup-seq-from parent node prev-element i parent-comp)
-            node)))
-      (loop [node node
-             elements element
-             inccup-seq (inccup-seq)
-             i 0]
-        (if-not (empty? elements)
-          (recur (diff-children parent node nil (first elements)
-                                inccup-seq i parent-comp)
-                 (rest elements) inccup-seq (inc i))
-          (do
-            (aset prev-forms index inccup-seq)
-            (delete-prev-element parent node prev-element parent-comp)))))
-    (or (nil? element) (= "" (str element)))
-    (do
-      (aset prev-forms index nil)
-      (delete-prev-element parent node prev-element parent-comp))
+      (let [nodes (aget dynamic-nodes index)
+            prev-length (.-length prev-element)
+            length (count element)
+            min-length (min prev-length length)
+            i (volatile! 0)
+            rest-elements
+            (loop [elements element]
+              (if (< @i min-length)
+                (do
+                  (diff-children (aget prev-element @i) (first elements)
+                                 prev-element @i nodes parent-comp)
+                  (vswap! i inc)
+                  (recur (rest elements)))
+                elements))]
+        (when (< min-length prev-length)
+          (pop-inccup-seq-from prev-element min-length
+                               prev-length parent-comp)
+          (pop-nodes-from nodes min-length prev-length))
+        (when (< min-length length)
+          (let [parent (parent-node (aget nodes (dec @i)))]
+            (loop [elements rest-elements]
+              (when (and (< @i length) parent)
+                (create-dynamic parent (first elements) prev-element
+                                @i nodes parent-comp)
+                (vswap! i inc)
+                (recur (rest elements)))))))
+      (let [prev-node (aget dynamic-nodes index)
+            parent (parent-node prev-node)]
+        (remove-node prev-node)
+        (maybe-clean-components (aget prev-forms index) parent-comp)
+        (when parent
+          (create-dynamic parent element prev-forms index
+                          dynamic-nodes parent-comp))))
+    (or (string? prev-element) (nil? prev-element))
+    (when (not= prev-element (str element))
+      (aset prev-forms index (str element))
+      (oset (aget dynamic-nodes index) "nodeValue" (str element)))
     :else
-    (if (string? prev-element)
-      (if (= prev-element (str element))
-        (skip-text-node node)
-        (set-text-node parent node element))
-      (do
-        (aset prev-forms index (str element))
-        (create-text-node parent node (str element))
-        (delete-prev-element parent node prev-element parent-comp)))))
+    (replace-node element prev-forms index dynamic-nodes
+                  (.createTextNode js/document (str element))
+                  parent-comp)))
 
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
    Returns the created node"
-  [static forms forms-fn parent-comp]
-  (let [dynamic-tag? (number? (first static))
-        tag (if dynamic-tag?
-              (->> (first static) forms-fn name
-                   (aset forms (first static)))
-              (first static))
-        attrs (if (number? (second static))
-                (->> (second static) forms-fn attrs->js
-                     (aset forms (second static)))
-                (second static))]
+  [static forms forms-fn dynamic-nodes parent-comp]
+  (let [maybe-tag (first static)
+        maybe-attrs (second static)
+        tag (if (number? maybe-tag)
+              (->> maybe-tag forms-fn name (aset forms maybe-tag))
+              maybe-tag)
+        attrs (if (number? maybe-attrs)
+                (->> maybe-attrs forms-fn attrs->js
+                     (aset forms maybe-attrs))
+                maybe-attrs)]
     (let [new-node (create-dom tag attrs nil)
           l (count static)]
+      (when (number? maybe-tag)
+        (aset dynamic-nodes maybe-tag new-node))
+      (when (number? maybe-attrs)
+        (aset dynamic-nodes maybe-attrs new-node))
       (loop [index 2]
         (when (< index l)
           (let [child (aget static index)]
@@ -684,19 +766,19 @@
               (nil? child)
               nil
               (number? child)
-              (diff-children new-node nil nil (forms-fn child) forms
-                             child parent-comp)
+              (create-dynamic new-node (forms-fn child) forms child
+                              dynamic-nodes parent-comp)
               (string? child)
-              (diff-children new-node nil nil child
-                             forms child parent-comp)
+              (create-dynamic new-node child forms child
+                              dynamic-nodes parent-comp)
               :else
               (->> (create-comp-elements child forms forms-fn
-                                         parent-comp)
+                                         dynamic-nodes parent-comp)
                    (.appendChild new-node))))
           (recur (inc index))))
       new-node)))
 
-(defn keep-walking-path? [update-path var-deps-arr]
+#_(defn keep-walking-path? [update-path var-deps-arr]
   (let [l (count update-path)]
     (loop [index 0]
       (if (< index l)
@@ -705,7 +787,7 @@
           (recur (inc index)))
         false))))
 
-(defn walk-inccup-seq [node x]
+#_(defn walk-inccup-seq [node x]
   (let [l (count x)]
     (loop [node node
            index 0]
@@ -739,14 +821,14 @@
                (oset new-attrs-keys k nil)
                (when (not= prev-v v)
                  (if-let [prop-name (attr-as-prop k)]
-                   (oset node prop-name v)
+                   (oset node prop-name (util/escape-string v))
                    (.setAttribute node k (util/escape-string v)))
                  (oset prev-attrs k v)))))
     (goog.object/forEach
      prev-attrs (fn [v k _]
                   (when-not (goog.object/containsKey new-attrs-keys k)
                     (if-let [prop-name (attr-as-prop k)]
-                      (oset node prop-name nil)
+                      (oset node prop-name "")
                       (.removeAttribute node k))
                     (goog.object/remove prev-attrs k))))))
 
@@ -754,68 +836,59 @@
   "Walk a component. Updates dynamic parts of the component during the
   walk. `node` is the current node beeing walked. `parent` is its parent
   node. Returns the next sibling of `node`"
-  [parent node static var-deps-arr prev-forms forms-fn parent-comp]
+  [static var-deps-arr prev-forms forms-fn dynamic-nodes parent-comp]
   (cond
     (nil? static)
-    node
+    nil
+    (string? static)
+    nil
     (number? static)
     ;; We just encountered a dynamic child. Diff it against the previous
     ;; child if the params it depends on did change.
-    (let [prev-form (aget prev-forms static)]
-      (if (aget var-deps-arr static)
-        (diff-children parent node prev-form (forms-fn static)
-                       prev-forms static parent-comp)
-        (cond (nil? prev-form) node
-              (inccup-seq? prev-form) (walk-inccup-seq node prev-form)
-              :else (next-sibling node))))
-    (string? static)
-    (skip-text-node node)
+    (when (aget var-deps-arr static)
+      (diff-children (aget prev-forms static) (forms-fn static)
+                     prev-forms static dynamic-nodes parent-comp))
     :else
-    (let [update-paths (oget static "inccup/update-paths")]
-      (if (keep-walking-path? update-paths var-deps-arr)
-        (let [tag (first static)
-              dynamic-tag? (number? tag)
-              prev-tag (if dynamic-tag? (aget prev-forms tag) tag)
-              new-tag (if (and dynamic-tag? (aget var-deps-arr tag))
-                        (name (forms-fn tag))
-                        prev-tag)
-              attrs (second static)
-              prev-attrs (if (number? attrs)
-                           (aget prev-forms attrs)
-                           attrs)
-              new-attrs (if (and (number? attrs) (aget var-deps-arr attrs))
-                          (attrs->js (forms-fn attrs))
-                          prev-attrs)
-              ;; If the tag did change, replace the current node by a
-              ;; node of a new type and move the children of the old node
-              ;; to the new one.
-              maybe-new-node
-              (if (not= prev-tag new-tag)
-                (-> (create-dom
-                     new-tag new-attrs (when node (.-childNodes node)))
-                    (#(replace-or-append parent % node)))
-                node)
-              l (count static)]
-          ;; Update the node attributes if the params it depends on
-          ;; did change or if the node tag did change
-          (when (or (not= prev-tag new-tag)
-                    (not (identical? prev-attrs new-attrs)))
-            (diff-attrs maybe-new-node prev-attrs new-attrs))
+    (let [tag (first static)
+          dynamic-tag? (number? tag)
+          prev-tag (if dynamic-tag? (aget prev-forms tag) tag)
+          new-tag (if (and dynamic-tag? (aget var-deps-arr tag))
+                    (name (forms-fn tag))
+                    prev-tag)
+          attrs (second static)
+          prev-attrs (if (number? attrs)
+                       (aget prev-forms attrs)
+                       attrs)
+          new-attrs (if (and (number? attrs) (aget var-deps-arr attrs))
+                      (attrs->js (forms-fn attrs))
+                      prev-attrs)
+          ;; If the tag did change, replace the current node by a
+          ;; node of a new type and move the children of the old node
+          ;; to the new one.
+          maybe-new-node
           (when (not= prev-tag new-tag)
-            (aset prev-forms tag new-tag))
-          (when (not (identical? prev-attrs new-attrs))
-            (aset prev-forms attrs new-attrs))
-          (loop [child (when maybe-new-node
-                         (.-firstChild maybe-new-node))
-                 index 2]
-            (when (< index l)
-              (recur
-               (update-comp-elements
-                maybe-new-node child (aget static index)
-                var-deps-arr prev-forms forms-fn parent-comp)
-               (inc index))))
-          (next-sibling maybe-new-node))
-        (next-sibling node)))))
+            (let [old-node (aget dynamic-nodes tag)
+                  new-node (create-dom new-tag new-attrs
+                                       (.-childNodes old-node))]
+              (aset dynamic-nodes tag new-node)
+              (aset prev-forms tag new-tag)
+              (goog.dom/replaceNode new-node old-node)
+              new-node))
+          l (count static)]
+      ;; Update the node attributes if the params it depends on
+      ;; did change and if the node tag did not change
+      (when (and (= prev-tag new-tag)
+                 (not (identical? prev-attrs new-attrs)))
+        (diff-attrs (aget dynamic-nodes attrs) prev-attrs new-attrs))
+      (when (not (identical? prev-attrs new-attrs))
+        (aset prev-forms attrs new-attrs))
+      (loop [index 2]
+        (when (< index l)
+          (update-comp-elements (aget static index) var-deps-arr
+                                prev-forms forms-fn dynamic-nodes
+                                parent-comp)
+          (recur (inc index))))
+      maybe-new-node)))
 
 (defn create-comp* [comp parent-comp]
   (maybe-set-global (.-id comp)
@@ -825,11 +898,14 @@
         key (oget opts "key")
         level (when key (oget opts "level"))
         forms-fn (.-forms comp)
-        forms (-> (.-params comp) count make-array)
-        var-deps-arr (-> (.-params comp) count make-array)
+        count-dynamic (.-count_dynamic comp)
+        forms (-> count-dynamic make-array)
+        var-deps-arr (-> count-dynamic make-array)
+        dynamic-nodes (-> count-dynamic make-array)
         parent-comps []]
     (oset comp "inccup/forms" forms)
     (oset comp "inccup/var-deps-arr" var-deps-arr)
+    (oset comp "inccup/dynamic-nodes" dynamic-nodes)
     (oset comp "inccup/parent-comp" parent-comp)
     (oset comp "inccup/keymap" (js-obj))
     (oset comp "inccup/removed-keys" (js-obj))
@@ -839,11 +915,11 @@
        key comp))
     (swap-count-global (.-id comp) inc)
     (let [new-node (create-comp-elements
-                    (.-static$ comp) forms forms-fn comp)]
-      (when key (oset comp "inccup/node" new-node))
+                    (.-static$ comp) forms forms-fn dynamic-nodes comp)]
+      (oset comp "inccup/node" new-node)
       new-node)))
 
-(defn update-comp* [prev-comp comp parent node]
+(defn update-comp* [prev-comp comp]
   (let [params (.-params comp)
         prev-params (.-params prev-comp)
         prev-forms (oget prev-comp "inccup/forms")
@@ -851,12 +927,15 @@
         var-deps-arr (->> (.-var-deps comp)
                           (make-var-deps-arr
                            var-deps-arr params prev-params))
+        dynamic-nodes (oget prev-comp "inccup/dynamic-nodes")
         forms-fn (.-forms comp)
-        next-node (update-comp-elements parent node (.-static$ comp)
-                                        var-deps-arr prev-forms forms-fn
-                                        prev-comp)]
-    (clean-comp-keys prev-comp)
-    next-node))
+        maybe-new-node (update-comp-elements (.-static$ comp) var-deps-arr
+                                             prev-forms forms-fn
+                                             dynamic-nodes prev-comp)]
+    (set! (.-params prev-comp) params)
+    (when maybe-new-node
+      (oset prev-comp "inccup/node" maybe-new-node))
+    (clean-comp-keys prev-comp)))
 
 (defn render! [node comp-fn & params]
   (binding [*globals* #js {}]
@@ -871,11 +950,8 @@
 (defn update! [prev-comp comp-fn & params]
   (binding [*globals* (oget prev-comp "inccup/globals")]
     (assert (not (nil? *globals*)))
-    (let [comp (apply comp-fn params)
-          node (oget prev-comp "inccup/node")
-          parent (.-parentNode node)
-          _ (assert (= (.-id comp) (.-id prev-comp)))
-          next-node (update-comp* prev-comp comp parent node)]
-      (oset prev-comp "inccup/node" (prev-sibling parent next-node))
+    (let [comp (apply comp-fn params)]
+      (assert (= (.-id comp) (.-id prev-comp)))
+      (update-comp* prev-comp comp)
       (clean-globals)
       prev-comp)))

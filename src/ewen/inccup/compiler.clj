@@ -55,7 +55,8 @@
 (defmacro with-opts [{:keys [key level] :or {level 1} :as opts} comp]
   (when level (assert (not (nil? key))))
   (assert (or (nil? level) (and (number? level) (> level 0))))
-  `(ewen.inccup.incremental.vdom/set-opts ~comp ~(map->js-obj opts)))
+  `(ewen.inccup.incremental.vdom/set-opts
+    ~comp ~(map->js-obj (assoc opts :level level))))
 
 (defn compile-dispatch-cljs
   ([env forms]

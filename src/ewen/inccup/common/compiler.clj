@@ -56,6 +56,18 @@ from an element name."
       (not (unevaluated? x))
       (not-hint? x java.util.Map)))
 
+(defn merge-attributes [tag-attrs expr]
+  (let [id (:id expr)
+        merged-attrs (merge-with
+                      (fn [attr1 attr2]
+                        (cond (and attr1 (string? attr2))
+                              (str attr1 " " attr2)
+                              attr1
+                              `(cljs.core/str ~(str attr1 " ") ~attr2)
+                              :else attr2))
+                      tag-attrs expr)]
+    (if id (assoc merged-attrs :id id) merged-attrs)))
+
 (defn normalize-element
   "Ensure an element vector is of the form [tag-name attrs content]."
   [[tag & content]]
@@ -67,40 +79,40 @@ from an element name."
                            id (assoc :id id)
                            class (assoc
                                   :class
-                                  (if class
+                                  (when class
                                     (str/replace ^String class "." " "))))
         map-attrs        (first content)]
     (if (map? map-attrs)
-      [tag (c-runtime/merge-attributes tag-attrs map-attrs) (next content)]
+      [tag (merge-attributes tag-attrs map-attrs) (next content)]
       [tag tag-attrs content])))
 
-(defn update-dynamic-forms [expr path]
+(defn update-dynamic-forms [expr path original-expr]
   (when *dynamic-forms*
     (set! *dynamic-forms*
           (conj *dynamic-forms*
                 {:path path
                  :form expr
+                 :original-form original-expr
                  :index (count *dynamic-forms*)}))
     (-> (count *dynamic-forms*) dec ->DynamicLeaf)))
 
 (defn compile-dynamic-expr [expr path]
-  (update-dynamic-forms expr path))
+  (update-dynamic-forms expr path expr))
 
 (defn compile-attr-map [attrs path]
-  (update-dynamic-forms attrs path))
+  (update-dynamic-forms attrs path attrs))
 
 (defn maybe-attr-map
   ([attrs attr-path path tag-attrs]
    {:pred [(not nil? attrs)
            (not (some c-comp/unevaluated? (mapcat identity attrs)))]}
    [(update-dynamic-forms
-     `(c-runtime/maybe-merge-attributes ~tag-attrs ~attrs) attr-path)
-    (update-dynamic-forms
-     `(c-runtime/maybe-first-child) path)]))
+     `(c-runtime/maybe-merge-attributes ~tag-attrs ~attrs) attr-path attrs)
+    (update-dynamic-forms `(c-runtime/maybe-first-child) path attrs)]))
 
 (defn dynamic-tag [tag path]
   {:pred [(not (c-comp/literal? tag))]}
-  (update-dynamic-forms tag path))
+  (update-dynamic-forms tag path tag))
 
 (defn element-compile-strategy
   "Returns the compilation strategy to use for a given element."
@@ -209,7 +221,7 @@ from an element name."
     (seq? expr) (compile-dynamic-expr expr path)
     :else (compile-dynamic-expr expr path)))
 
-(defn handle-void-tags [x]
+#_(defn handle-void-tags [x]
   (if (vector? x)
     (let [[tag attrs & children] x
           m (meta x)]
@@ -234,7 +246,7 @@ from an element name."
 
 (comment
   (walk-static
-   handle-void-tags identity
+   identity identity
    ["div" {:id "ii", :class "cc"} ["p" {} ["p2" {}]]
     (->DynamicLeaf 1)])
   )

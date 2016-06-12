@@ -25,17 +25,10 @@
   (cond
     (keyword? x) (literal->js (name x))
     (vector? x)
-    (let [update-paths (-> x meta :update-paths)
-          [tag attrs & content] x]
-      (if update-paths
-        `(ewen.inccup.incremental.vdom/array-with-path
-          ~(c-comp/coll->js-array update-paths)
-          (cljs.core/array ~(literal->js tag)
-                           ~(literal->js attrs)
-                           ~@content))
-        `(cljs.core/array ~(literal->js tag)
-                          ~(literal->js attrs)
-                          ~@content)))
+    (let [[tag attrs & content] x]
+      `(cljs.core/array ~(literal->js tag)
+                        ~(literal->js attrs)
+                        ~@content))
     (map? x) `(cljs.core/js-obj
                ~@(interleave (map name (keys x))
                              (vals x)))
@@ -43,15 +36,15 @@
     :else (str x)))
 
 (defn dynamic-form-with-tracked-vars
-  [env tracked-vars {:keys [form] :as dynamic-form}]
-  (let [[expr used-vars] (track-vars env tracked-vars form)]
+  [env tracked-vars {:keys [original-form] :as dynamic-form}]
+  (let [[expr used-vars] (track-vars env tracked-vars original-form)]
     (assoc dynamic-form :var-deps used-vars)))
 
 (defn dynamic-forms-with-tracked-vars [env tracked-vars dynamic]
   (into [] (map (partial dynamic-form-with-tracked-vars env tracked-vars))
         dynamic))
 
-(defn static-with-metas [static {:keys [path index]}]
+#_(defn static-with-metas [static {:keys [path index]}]
   (loop [static static
          rest-path path
          processed-path []]
@@ -91,14 +84,13 @@
           [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])
         dynamic (dynamic-forms-with-tracked-vars
                  env tracked-vars dynamic)
-        static (loop [static static
+        #_static #_(loop [static static
                       dynamic dynamic]
                  (if-let [update-path (first dynamic)]
                    (recur (static-with-metas static update-path)
                           (rest dynamic))
                    static))
-        static (c-comp/walk-static
-                c-comp/handle-void-tags literal->js static)
+        static (c-comp/walk-static identity literal->js static)
         var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
         id (swap! component-id inc)]
     `(ewen.inccup.incremental.vdom/->Component
@@ -116,13 +108,13 @@
        ~(->> dynamic (map :var-deps)
              (map var-deps->indexes)
              c-comp/coll->js-array))
-      ~(let [var-deps-index-sym (gensym "var-deps-index")]
-         `(fn [~var-deps-index-sym]
-            (cljs.core/case ~var-deps-index-sym
-              ~@(->> dynamic
-                     (map :form)
-                     (map-indexed indexed-identity)
-                     (apply concat))))))))
+      (fn [var-deps-index#]
+        (cljs.core/case var-deps-index#
+          ~@(->> dynamic
+                 (map :form)
+                 (map-indexed indexed-identity)
+                 (apply concat))))
+      ~(count dynamic))))
 
 (defn collect-input-var-deps
   [tracked-vars collected-vars

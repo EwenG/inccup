@@ -150,7 +150,8 @@
       (update! def3 "f")
       (update! def3 {:id "i"}))
 
-  (render! (new-root) def4)
+  (-> (render! (new-root) def4)
+      (update! def4))
 
   (def cc (render! (new-root) def5 :p))
   (update! cc def5 :div)
@@ -175,7 +176,7 @@
       (is (inccup= @comp
                    #js ["div" #js {} "5" "f"])))))
 
-(defn template1 [x] #h[:p#ii.cc {:e x :class x} x "4"])
+(defn template1 [x] #h [:p#ii.cc {:e x :class x} x "4"])
 (defn template2 [x z] #h [:p {} (count x) #h [:p z]
                           (for [y x] (template1 y))])
 
