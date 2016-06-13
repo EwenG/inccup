@@ -62,7 +62,7 @@
   (let [[static dynamic]
         (binding [c-comp/*dynamic-forms* []]
           [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])
-        compiled (c-comp/walk-static c-comp/handle-void-tags
+        compiled (c-comp/walk-static identity
                                      (partial literal->string dynamic)
                                      static)]
     `(runtime/->InccupString (str ~@(collapse-strings (rest compiled))))))
