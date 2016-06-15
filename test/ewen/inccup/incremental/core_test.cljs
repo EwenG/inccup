@@ -1,7 +1,7 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.compiler
-             :refer-macros [with-opts register-tagged-literal! h]]
+             :refer-macros [with-opts! register-tagged-literal! h]]
             [ewen.inccup.incremental.vdom :as vdom
              :refer [Component render! update!]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
@@ -232,22 +232,29 @@
 (defn template3 [x] #h [:p {:class x} nil x])
 (defn template4 [x] #h [:p {}
                         (for [y x]
-                          (with-opts {:key y}
+                          (with-opts! {:key y}
                             (template3 (inc y))))])
 
 (comment
   (def cc (render! (new-root) template4 (list 1 2)))
   (update! cc template4 (list 2 1))
+  (update! cc template4 (list 1 2))
+  (def cc (render! (new-root) template4 (list 1 2)))
+  (update! cc template4 (list 0 1 2))
+  (update! cc template4 (list 3 0 1))
+  (update! cc template4 (list 2 3 0))
   (def ll (atom (cycle (range 20))))
-  (do (update! cc template4 (take 19 @ll))
+  (let [n (take 19 @ll)]
+    (prn n)
+    (update! cc template4 n)
       (do (swap! ll #(drop 19 %)) nil))
   )
 
 (defn template5 [x y] #h [:p {}
                           (let [cc #h [:div "else"]]
                             (if y
-                              #h [:div (with-opts {:key 1 :level 2} cc)]
-                              (with-opts {:key 1} cc)))])
+                              #h [:div (with-opts! {:key 1} cc)]
+                              (with-opts! {:key 1} cc)))])
 
 (comment
   (def cc (render! (new-root) template5 3 false))

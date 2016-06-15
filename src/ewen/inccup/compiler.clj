@@ -52,11 +52,10 @@
         (recur (rest m) (conj data (name k) v)))
       `(cljs.core/js-obj ~@data))))
 
-(defmacro with-opts [{:keys [key level] :or {level 1} :as opts} comp]
-  (when level (assert (not (nil? key))))
-  (assert (or (nil? level) (and (number? level) (> level 0))))
-  `(ewen.inccup.incremental.vdom/set-opts
-    ~comp ~(map->js-obj (assoc opts :level level))))
+(defmacro with-opts! [{:keys [key] :as opts} comp]
+  (if key
+    `(ewen.inccup.incremental.vdom/set-comp-key! ~comp ~key)
+    comp))
 
 (defn compile-dispatch-cljs
   ([env forms]
