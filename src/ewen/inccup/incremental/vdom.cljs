@@ -78,18 +78,6 @@
         false)
       true)))
 
-(defn next-sibling [node]
-  (when node (.-nextSibling node)))
-
-(defn prev-sibling [parent node]
-  (if node
-    (.-previousSibling node)
-    (.-lastChild parent)))
-
-(defn insert-before [parent new-node node]
-  (.insertBefore parent new-node node)
-  (next-sibling node))
-
 (defn attr-as-prop [attr]
   (case attr
     "class" "className"
@@ -134,12 +122,6 @@
           (.appendChild element child)
           (recur))))
     element))
-
-(defn replace-or-append [parent new-node node]
-  (if node
-    (.replaceChild parent new-node node)
-    (.appendChild parent new-node))
-  new-node)
 
 (defn maybe-set-global [id k1 v1 k2 v2]
   (when-not (oget *globals* id)
@@ -226,15 +208,14 @@
     (recur (aget node-or-nodes 0))
     node-or-nodes))
 
-(defn node-or-placeholder [comp]
-  (or (goog.object/get comp "inccup/placeholder")
-      (goog.object/get comp "inccup/node")))
-
 (defn replace-element
   [element prev-forms index dynamic-nodes new-node removed-keys]
   (let [prev-element (aget prev-forms index)]
     (cond (instance? Component prev-element)
-          (let [prev-node (node-or-placeholder prev-element)]
+          (let [prev-node (or (goog.object/get
+                               prev-element "inccup/placeholder")
+                              (goog.object/get
+                               prev-element "inccup/node"))]
             (remove-comp prev-element removed-keys)
             (goog.dom/replaceNode new-node prev-node))
           (inccup-seq? prev-element)
