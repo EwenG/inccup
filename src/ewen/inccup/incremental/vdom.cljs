@@ -160,18 +160,63 @@
       (recur (inc index))))
   arr)
 
+(defn remove-comp* [comp key removed-keys]
+  (when (not key)
+    (let [id (.-id comp)]
+      (swap-count-global id dec)
+      (when (= 0 (-> (oget *globals* id) (oget "count")))
+        (goog.object/remove *globals* id))))
+  (if (oget comp "inccup/placeholder")
+    (oset comp "inccup/placeholder" nil)
+    (when key
+      (oset removed-keys key true))))
+
+(defn walk-sub-comps [x removed-keys f]
+  (let [forms-array (cond (instance? Component x)
+                          (do
+                            (f x (oget x "inccup/key") removed-keys)
+                            (oget x "inccup/forms"))
+                          (inccup-seq? x) x
+                          :else nil)]
+    (when forms-array
+      (let [length (.-length forms-array)]
+        (loop [index 0]
+          (when (< index length)
+            (walk-sub-comps (aget forms-array index) removed-keys f)
+            (recur (inc index))))))))
+
+(defn remove-comp [x removed-keys]
+  (walk-sub-comps x removed-keys remove-comp*))
+
+(defn unset-removed-key [comp key removed-keys]
+  (goog.object/remove removed-keys key))
+
+(defn move-comp [x removed-keys]
+  (walk-sub-comps x removed-keys unset-removed-key)
+  x)
+
+(defn clean-removed-keys [keymap removed-keys]
+  (goog.object/forEach
+   removed-keys
+   (fn [v key o]
+     (let [comp (oget keymap key)]
+       (let [id (.-id comp)]
+         (swap-count-global id dec)
+         (when (= 0 (-> (oget *globals* id) (oget "count")))
+           (goog.object/remove *globals* id)))
+       (goog.object/remove keymap key)))))
+
 (defn pop-seq-from
-  [prev-forms dynamic-nodes start-index length removed-comps]
+  [prev-forms dynamic-nodes start-index length removed-keys]
   (loop [index (dec length)]
     (when (>= index start-index)
       (let [element (aget prev-forms index)]
         (cond (instance? Component element)
-              (.push removed-comps element)
+              (remove-comp element removed-keys)
               (inccup-seq? element)
               (pop-seq-from element (aget dynamic-nodes index)
-                            0 (.-length element) removed-comps)
-              :else
-              (goog.dom/removeNode (aget dynamic-nodes index)))
+                            0 (.-length element) removed-keys))
+        (goog.dom/removeNode (aget dynamic-nodes index))
         (.pop prev-forms)
         (.pop dynamic-nodes))
       (recur (dec index)))))
@@ -181,33 +226,22 @@
     (recur (aget node-or-nodes 0))
     node-or-nodes))
 
-#_(defn remove-comp [x removed-comps]
-  (let [forms-array (cond (instance? Component x)
-                          (do
-                            (.push removed-comps x)
-                            (oget x "inccup/forms"))
-                          (inccup-seq? x) x
-                          :else nil)]
-    (when forms-array
-      (let [length (.-length forms-array)]
-        (loop [index 0]
-          (when (< index length)
-            (remove-comp (aget forms-array index) removed-comps)
-            (recur (inc index))))))))
+(defn node-or-placeholder [comp]
+  (or (goog.object/get comp "inccup/placeholder")
+      (goog.object/get comp "inccup/node")))
 
 (defn replace-element
-  [element prev-forms index dynamic-nodes new-node
-   removed-comps]
+  [element prev-forms index dynamic-nodes new-node removed-keys]
   (let [prev-element (aget prev-forms index)]
     (cond (instance? Component prev-element)
-          (let [prev-node (oget prev-element "inccup/node")]
-            (.insertBefore (.-parentNode prev-node) new-node prev-node)
-            (.push removed-comps prev-element))
+          (let [prev-node (node-or-placeholder prev-element)]
+            (remove-comp prev-element removed-keys)
+            (goog.dom/replaceNode new-node prev-node))
           (inccup-seq? prev-element)
           (let [first-node (get-first-node dynamic-nodes)]
             (.insertBefore (.-parentNode first-node) new-node first-node)
             (pop-seq-from prev-element (aget dynamic-nodes index) 0
-                          (.-length prev-element) removed-comps))
+                          (.-length prev-element) removed-keys))
           :else
           (goog.dom/replaceNode new-node (aget dynamic-nodes index)))
     (aset prev-forms index element)
@@ -221,59 +255,34 @@
 (defn inccup-seq []
   (doto #js [] (oset "inccup/seq" true)))
 
-(defn add-comp-move [prev-comp-or-node key comp-moves]
-  (assert (not (goog.object/containsKey comp-moves key)))
-  (goog.object/set comp-moves key prev-comp-or-node))
-
-(defn clean-comp [comp id key keymap]
-  (swap-count-global id dec)
-  (when (= 0 (-> (oget *globals* id)
-                 (oget "count")))
-    (goog.object/remove *globals* id))
-  (when key
-    (goog.object/remove keymap key))
-  (goog.dom/removeNode (oget comp "inccup/node")))
-
-(defn handle-moved-comps [comp comp-node keymap comp-moves]
-  (let [id (.-id comp)]
-    (if-let [key (oget comp "inccup/key")]
-      (if-let [replaced-comp-or-node (oget comp-moves key)]
-        (do
-          (goog.object/remove comp-moves key)
-          (if (instance? Component replaced-comp-or-node)
-            (let [replaced-node (oget replaced-comp-or-node
-                                      "inccup/node")]
-              (goog.dom/replaceNode comp-node replaced-node)
-              (recur replaced-comp-or-node replaced-node
-                     keymap comp-moves))
-            (goog.dom/replaceNode comp-node replaced-comp-or-node)))
-        (clean-comp comp id key keymap))
-      (clean-comp comp id nil keymap))))
-
-(defn handle-removed-comps [keymap comp-moves removed-comps]
-  (loop [comp (.pop removed-comps)]
+(defn get-comp-with-key [key keymap removed-keys]
+  (let [removed-comp? (oget removed-keys key)
+        comp (oget keymap key)]
     (when comp
-      (handle-moved-comps
-       comp (oget comp "inccup/node") keymap comp-moves)
-      (recur (.pop removed-comps)))))
+      (if removed-comp?
+        (move-comp comp removed-keys)
+        (let [placeholder (.createTextNode js/document "")]
+          (goog.dom/replaceNode placeholder (oget comp "inccup/node"))
+          (oset comp "inccup/placeholder" placeholder)
+          comp)))))
 
 (declare create-comp*)
 
 (defn create-dynamic
-  [parent element prev-forms index dynamic-nodes keymap comp-moves]
+  [parent element prev-forms index dynamic-nodes keymap removed-keys]
   (cond
     (instance? Component element)
     (let [key (oget element "inccup/key")
-          moved-comp (when key (goog.object/get keymap key))]
+          moved-comp (when key
+                       (get-comp-with-key key keymap removed-keys))]
       (if moved-comp
-        (let [placeholder (.createTextNode js/document "")]
-          (.appendChild parent placeholder)
-          (aset dynamic-nodes index (oget moved-comp "inccup/node"))
-          (aset prev-forms index moved-comp)
-          (add-comp-move placeholder key comp-moves))
-        (let [new-node (create-comp* element keymap comp-moves)]
-          (.appendChild parent new-node)
-          (aset dynamic-nodes index new-node)
+        (let [node (oget moved-comp "inccup/node")]
+          (.appendChild parent node)
+          (aset dynamic-nodes index node)
+          (aset prev-forms index moved-comp))
+        (let [node (create-comp* element keymap removed-keys)]
+          (.appendChild parent node)
+          (aset dynamic-nodes index node)
           (aset prev-forms index element))))
     (seq? element)
     (let [inccup-seq (inccup-seq)
@@ -283,7 +292,7 @@
         (if-not (empty? elements)
           (do
             (create-dynamic parent (first elements)
-                            inccup-seq i nodes keymap comp-moves)
+                            inccup-seq i nodes keymap removed-keys)
             (recur (rest elements) (inc i)))
           (do
             (aset prev-forms index inccup-seq)
@@ -294,71 +303,32 @@
       (aset dynamic-nodes index new-node)
       (.appendChild parent new-node))))
 
-(def placeholder (.createTextNode js/document ""))
-
-(defn handle-moved-cycles [key keymap comp-moves]
-  (let [init-comp (oget keymap key)
-        moved-node (oget init-comp "inccup/node")
-        replaced-comp (oget comp-moves key)]
-    (goog.object/remove comp-moves key)
-    (goog.dom/replaceNode placeholder moved-node)
-    (loop [moved-node moved-node
-           replaced-comp replaced-comp]
-      (if (identical? replaced-comp init-comp)
-        (goog.dom/replaceNode moved-node placeholder)
-        (let [replaced-node (oget replaced-comp "inccup/node")
-              key (oget replaced-comp "inccup/key")
-              next-comp (oget comp-moves key)]
-          (goog.object/remove comp-moves key)
-          (goog.dom/replaceNode moved-node replaced-node)
-          (recur replaced-node next-comp))))))
-
-;; Mouvement clé existante -> anything mais pas
-;; clé non existante (nouvel element) -> anything
-
-;; remplacer par rien ou nouvel element avec clé ou element sans clé
-;; mais pas element existant avec clé
-
 (declare update-comp*)
 
 (defn diff-children
-  [element prev-forms index dynamic-nodes
-   keymap comp-moves removed-comps]
+  [element prev-forms index dynamic-nodes keymap removed-keys]
   (let [prev-element (aget prev-forms index)]
     (cond
       (instance? Component element)
-      (let [key (oget element "inccup/key")]
-        (if key
-          (if-let [moved-comp (goog.object/get keymap key)]
-            (do
-              (when-not (identical? moved-comp prev-element)
-                (cond
-                  (instance? Component prev-element)
-                  (add-comp-move prev-element key comp-moves)
-                  (inccup-seq? prev-element)
-                  (let [placeholder (.createTextNode js/document "") ]
-                    (goog.dom/insertSiblingBefore
-                     placeholder (get-first-node prev-element))
-                    (pop-seq-from prev-element (aget dynamic-nodes index)
-                                  0 (.-length prev-element) removed-comps)
-                    (add-comp-move placeholder key comp-moves))
-                  :else
-                  (add-comp-move (aget dynamic-nodes index)
-                                 key comp-moves))
-                (aset prev-forms index moved-comp)
-                (aset dynamic-nodes index (oget moved-comp "inccup/node")))
-              (update-comp* moved-comp element keymap
-                            comp-moves removed-comps))
+      (if-let [key (oget element "inccup/key")]
+        (if (and (instance? Component prev-element)
+                 (= key (oget prev-element "inccup/key")))
+          (update-comp* prev-element element keymap removed-keys)
+          (if-let [moved-comp (get-comp-with-key key keymap removed-keys)]
+            (let [new-node (oget moved-comp "inccup/node")]
+              (replace-element moved-comp prev-forms index
+                               dynamic-nodes new-node removed-keys)
+              (update-comp* moved-comp element keymap removed-keys))
             (replace-element element prev-forms index dynamic-nodes
-                             (create-comp* element keymap comp-moves)
-                             removed-comps))
-          (if (and (instance? Component prev-element)
-                   (= (.-id prev-element) (.-id element)))
-            (update-comp* prev-element element keymap
-                          comp-moves removed-comps)
-            (replace-element element prev-forms index dynamic-nodes
-                             (create-comp* element keymap comp-moves)
-                             removed-comps))))
+                             (create-comp* element keymap removed-keys)
+                             removed-keys)))
+        (if (and (instance? Component prev-element)
+                 (= (.-id prev-element) (.-id element))
+                 (not (oget prev-element "inccup/key")))
+          (update-comp* prev-element element keymap removed-keys)
+          (replace-element element prev-forms index dynamic-nodes
+                           (create-comp* element keymap removed-keys)
+                           removed-keys)))
       (seq? element)
       (if (inccup-seq? prev-element)
         (let [nodes (aget dynamic-nodes index)
@@ -371,27 +341,27 @@
                 (if (< @i min-length)
                   (do
                     (diff-children (first elements) prev-element @i nodes
-                                   keymap comp-moves removed-comps)
+                                   keymap removed-keys)
                     (vswap! i inc)
                     (recur (rest elements)))
                   elements))]
           (when (< min-length prev-length)
             (pop-seq-from prev-element nodes min-length
-                          prev-length removed-comps))
+                          prev-length removed-keys))
           (when (< min-length length)
             (let [parent (parent-node (aget nodes (dec @i)))]
               (loop [elements rest-elements]
                 (when (and (< @i length) parent)
-                  (create-dynamic parent (first elements)
-                                  prev-element @i nodes keymap comp-moves)
+                  (create-dynamic parent (first elements) prev-element
+                                  @i nodes keymap removed-keys)
                   (vswap! i inc)
                   (recur (rest elements)))))))
         (let [parent (.-parentNode (aget dynamic-nodes index))]
           (replace-element element prev-forms index dynamic-nodes
                            (create-dynamic parent element prev-forms
                                            index dynamic-nodes keymap
-                                           comp-moves)
-                           removed-comps)))
+                                           removed-keys)
+                           removed-keys)))
       (or (string? prev-element) (nil? prev-element))
       (when (not= prev-element (str element))
         (aset prev-forms index (str element))
@@ -400,7 +370,7 @@
       ;; element is a string or nil, prev-element is of different type
       (replace-element element prev-forms index dynamic-nodes
                        (.createTextNode js/document (str element))
-                       removed-comps))))
+                       removed-keys))))
 
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
@@ -464,7 +434,7 @@
   walk. `node` is the current node beeing walked. `parent` is its parent
   node. Returns the next sibling of `node`"
   [static var-deps-arr prev-forms forms-fn dynamic-nodes
-   keymap comp-moves removed-comps]
+   keymap removed-keys]
   (cond
     (nil? static)
     nil
@@ -475,7 +445,7 @@
     ;; child if the params it depends on did change.
     (when (aget var-deps-arr static)
       (diff-children (forms-fn static) prev-forms static dynamic-nodes
-                     keymap comp-moves removed-comps))
+                     keymap removed-keys))
     :else
     (let [tag (first static)
           dynamic-tag? (number? tag)
@@ -514,11 +484,11 @@
         (when (< index l)
           (update-comp-elements (aget static index) var-deps-arr
                                 prev-forms forms-fn dynamic-nodes
-                                keymap comp-moves removed-comps)
+                                keymap removed-keys)
           (recur (inc index))))
       maybe-new-node)))
 
-(defn create-comp* [comp keymap comp-moves]
+(defn create-comp* [comp keymap removed-keys]
   (let [id (.-id comp)
         static (.-static$ comp)
         key (oget comp "inccup/key")
@@ -536,11 +506,12 @@
       (goog.object/set keymap key comp))
     (swap-count-global id inc)
     (let [new-node (create-comp-elements static forms (.-forms comp)
-                                         dynamic-nodes keymap comp-moves)]
+                                         dynamic-nodes keymap
+                                         removed-keys)]
       (oset comp "inccup/node" new-node)
       new-node)))
 
-(defn update-comp* [prev-comp comp keymap comp-moves removed-comps]
+(defn update-comp* [prev-comp comp keymap removed-keys]
   (let [params (.-params comp)
         prev-params (.-params prev-comp)
         prev-forms (oget prev-comp "inccup/forms")
@@ -553,7 +524,7 @@
         maybe-new-node (update-comp-elements (.-static$ comp) var-deps-arr
                                              prev-forms forms-fn
                                              dynamic-nodes keymap
-                                             comp-moves removed-comps)]
+                                             removed-keys)]
     (set! (.-params prev-comp) params)
     (when maybe-new-node
       (oset prev-comp "inccup/node" maybe-new-node))))
@@ -574,17 +545,10 @@
     (assert (not (nil? *globals*)))
     (let [comp (apply comp-fn params)
           keymap (goog.object/get *globals* "keymap")
-          comp-moves #js {}
-          removed-comps #js []]
+          removed-keys #js {}]
       (assert (= (.-id comp) (.-id prev-comp)))
-      (update-comp* prev-comp comp keymap comp-moves removed-comps)
-
-      (.log js/console "keymap " (goog.object/get *globals* "keymap"))
-      (.log js/console "comp-moves " comp-moves)
-      (.log js/console "removed-comps " removed-comps)
-      (handle-removed-comps keymap comp-moves removed-comps)
-      (loop [key (goog.object/getAnyKey comp-moves)]
-        (when key
-          (handle-moved-cycles key keymap comp-moves)
-          (recur (goog.object/getAnyKey comp-moves))))
+      (update-comp* prev-comp comp keymap removed-keys)
+      (clean-removed-keys keymap removed-keys)
+      (.log js/console keymap)
+      (.log js/console removed-keys)
       prev-comp)))

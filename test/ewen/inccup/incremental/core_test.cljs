@@ -245,7 +245,6 @@
   (update! cc template4 (list 2 3 0))
   (def ll (atom (cycle (range 20))))
   (let [n (take 19 @ll)]
-    (prn n)
     (update! cc template4 n)
       (do (swap! ll #(drop 19 %)) nil))
   )
