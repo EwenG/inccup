@@ -18,15 +18,15 @@
 
 (deftype SeqVnode [vnodes])
 
-(defn into-vseq [vseq x]
+(defn into-vnodes [vnodes x]
   (let [length (.-length x)]
     (loop [index 0]
       (when (< index length)
-        (.push vseq (aget x index))
+        (.push vnodes (aget x index))
         (recur (inc index))))))
 
-(defn seq->vseq [items]
-  (let [vseq (array)
+(defn seq->vnodes [items]
+  (let [vnodes (array)
         length (count items)]
     (loop [items items
            index 0]
@@ -34,13 +34,16 @@
         (let [item (first items)]
           (cond
             (seq? item)
-            (into-vseq vseq (seq->vseq item))
+            (into-vnodes vnodes (seq->vnodes item))
             (instance? Component item)
-            (.push vseq item)
+            (.push vnodes item)
             :else
-            (.push vseq (->TextVnode (str item))))
+            (.push vnodes (->TextVnode (str item))))
           (recur (rest items) (inc index)))))
-    (->SeqVnode vseq)))
+    vnodes))
+
+(defn seq->vseq [items]
+  (-> items seq->vnodes ->SeqVnode))
 
 (defn oset [o k v]
   (goog.object/set o k v)
@@ -218,10 +221,10 @@
            (goog.object/remove *globals* id)))
        (goog.object/remove keymap key)))))
 
-(defn pop-vseq-from
-  [vseq start-index removed-keys]
+(defn pop-vseq-from-to
+  [vseq start-index end-index removed-keys]
   (let [vnodes (.-vnodes vseq)
-        length (.-length vnodes)]
+        length (or end-index (.-length vnodes))]
     (loop [index (dec length)]
       (when (>= index start-index)
         (let [element (aget vnodes index)]
@@ -250,7 +253,7 @@
             (when new-node
               (.insertBefore parent-node new-node
                              (.-firstChild parent-node)))
-            (pop-vseq-from prev-element 0 removed-keys))
+            (pop-vseq-from-to prev-element 0 nil removed-keys))
           :else
           (if new-node
             (goog.dom/replaceNode
@@ -337,15 +340,15 @@
 
 (declare update-comp*)
 
-(defn compatible-vnodes? [prev-vnode new-vnode]
-  (let [prev-key (oget prev-vnode "inccup/key")
-        new-key (oget new-vnode "inccup/key")]
-    (or (= prev-key new-key)
-        (and
-         (nil? prev-key) (nil? new-key)
-         (= (.-id prev-vnode) (.-id new-vnode)))
-        (and (instance? TextVnode prev-vnode)
-             (instance? TextVnode new-vnode)))))
+(defn compatible-vnodes? [prev-vnode new-vnode prev-key new-key]
+  (or (and
+       prev-key new-key
+       (= prev-key new-key))
+      (and
+       (nil? prev-key) (nil? new-key)
+       (= (.-id prev-vnode) (.-id new-vnode)))
+      (and (instance? TextVnode prev-vnode)
+           (instance? TextVnode new-vnode))))
 
 (defn update-vnode [prev-vnode new-vnode keymap removed-keys]
   (if (instance? Component prev-vnode)
@@ -358,6 +361,10 @@
   (= (oget prev-vnode "inccup/key")
      (oget new-vnode "inccup/key")))
 
+(defn inc-or-dec-vnode [vnode index key vnodes inc-or-dec]
+  (vreset! vnode (->> (vswap! index inc-or-dec) (aget vnodes)))
+  (vreset! key (oget @vnode "inccup/key")))
+
 (defn diff-vseq-with-keys
   [prev-vseq prev-vnodes prev-length vseq vnodes length
    local-keymap keymap removed-keys]
@@ -369,34 +376,46 @@
         new-start-vnode (volatile! (aget vnodes 0))
         prev-end-vnode (volatile! (aget prev-vnodes @prev-end-index))
         new-end-vnode (volatile! (aget vnodes @new-end-index))
+        prev-start-key (volatile! (oget @prev-start-vnode "inccup/key"))
+        new-start-key (volatile! (oget @new-start-vnode "inccup/key"))
+        prev-end-key (volatile! (oget @prev-end-vnode "inccup/key"))
+        new-end-key (volatile! (oget @new-end-vnode "inccup/key"))
         parent (oget prev-vseq "inccup/parent-node")]
     (while (and (<= @prev-start-index @prev-end-index)
                 (<= @new-start-index @new-end-index))
       (cond (nil? @prev-start-vnode)
-            (vreset! prev-start-vnode (->> (vswap! prev-start-index inc)
-                                           (aget prev-vnodes)))
+            (inc-or-dec-vnode prev-start-vnode prev-start-index
+                              prev-start-key prev-vnodes inc)
             (nil? @prev-end-vnode)
-            (vreset! prev-end-vnode (->> (vswap! prev-end-index dec)
-                                         (aget prev-vnodes)))
-            (compatible-vnodes? @prev-start-vnode @new-start-vnode)
+            (inc-or-dec-vnode prev-end-vnode prev-end-index
+                              prev-end-key prev-vnodes dec)
+            (compatible-vnodes? @prev-start-vnode @new-start-vnode
+                                @prev-start-key @new-start-key)
             (do
               (update-vnode @prev-start-vnode @new-start-vnode
                             keymap removed-keys)
               (aset vnodes @new-start-index @prev-start-vnode)
-              (vreset! prev-start-vnode (->> (vswap! prev-start-index inc)
-                                            (aget prev-vnodes)))
-              (vreset! new-start-vnode (->> (vswap! new-start-index inc)
-                                           (aget vnodes))))
-            (compatible-vnodes? @prev-end-vnode @new-end-vnode)
+              (when (and @new-start-key
+                         (not= @prev-start-index @new-start-index))
+                (oset local-keymap @new-start-key @new-start-index))
+              (inc-or-dec-vnode prev-start-vnode prev-start-index
+                                prev-start-key prev-vnodes inc)
+              (inc-or-dec-vnode new-start-vnode new-start-index
+                                new-start-key vnodes inc))
+            (compatible-vnodes? @prev-end-vnode @new-end-vnode
+                                @prev-end-key @new-end-key)
             (do
               (update-vnode @prev-end-vnode @new-end-vnode
                             keymap removed-keys)
               (aset vnodes @new-end-index @prev-end-vnode)
-              (vreset! prev-end-vnode (->> (vswap! prev-end-index dec)
-                                           (aget prev-vnodes)))
-              (vreset! new-end-vnode (->> (vswap! new-end-index dec)
-                                          (aget vnodes))))
-            (same-keys? @prev-start-vnode @new-end-vnode)
+              (when (and @new-end-key
+                         (not= @prev-end-index @new-end-index))
+                (oset local-keymap @new-end-key @new-end-index))
+              (inc-or-dec-vnode prev-end-vnode prev-end-index
+                                prev-end-key prev-vnodes dec)
+              (inc-or-dec-vnode new-end-vnode new-end-index
+                                new-end-key vnodes dec))
+            (= @prev-start-key @new-end-key)
             (do
               (update-vnode @prev-start-vnode @new-end-vnode
                             keymap removed-keys)
@@ -404,11 +423,12 @@
               (.insertBefore parent
                (oget @prev-start-vnode "inccup/node")
                (.-nextSibling (oget @prev-end-vnode "inccup/node")))
-              (vreset! prev-start-vnode (->> (vswap! prev-start-index inc)
-                                             (aget prev-vnodes)))
-              (vreset! new-end-vnode (->> (vswap! new-end-index dec)
-                                          (aget vnodes))))
-            (same-keys? @prev-end-vnode @new-start-vnode)
+              (oset local-keymap @new-end-key @new-end-index)
+              (inc-or-dec-vnode prev-start-vnode prev-start-index
+                                prev-start-key prev-vnodes inc)
+              (inc-or-dec-vnode new-end-vnode new-end-index
+                                new-end-key vnodes dec))
+            (= @prev-end-key @new-start-key)
             (do
               (update-vnode @prev-end-vnode @new-start-vnode
                             keymap removed-keys)
@@ -416,56 +436,66 @@
               (.insertBefore parent
                (oget @prev-end-vnode "inccup/node")
                (oget @prev-start-vnode "inccup/node"))
-              (vreset! prev-end-vnode (->> (vswap! prev-end-index dec)
-                                           (aget prev-vnodes)))
-              (vreset! new-start-vnode (->> (vswap! new-start-index inc)
-                                            (aget vnodes))))
+              (oset local-keymap @new-start-key @new-start-index)
+              (inc-or-dec-vnode prev-end-vnode prev-end-index
+                                prev-end-key prev-vnodes dec)
+              (inc-or-dec-vnode new-start-vnode new-start-index
+                                new-start-key vnodes inc))
             :else
-            (let [key (oget @new-start-vnode "inccup/key")]
-              (when key (oset local-keymap key @new-start-index))
-              (if-let [moved-comp-index (and key (oget local-keymap key))]
+            (do
+              (if-let [moved-comp-index (and @new-start-key
+                                             (oget local-keymap
+                                                   @new-start-key))]
                 (let [moved-comp (aget prev-vnodes moved-comp-index)]
                   (update-comp* moved-comp @new-start-vnode
                                 keymap removed-keys)
                   (aset vnodes @new-start-index moved-comp)
                   (aset prev-vnodes moved-comp-index nil)
                   (.insertBefore parent
-                   (oget moved-comp "inccup/node")
-                   (oget @prev-start-vnode "incup/node")))
-                (if-let [moved-comp (and key (get-comp-with-key
-                                              key keymap removed-keys))]
+                                 (oget moved-comp "inccup/node")
+                                 (oget @prev-start-vnode "inccup/node")))
+                (if-let [moved-comp (and @new-start-key
+                                         (get-comp-with-key
+                                          @new-start-key
+                                          keymap removed-keys))]
                   (do
                     (aset vnodes @new-start-index moved-comp)
                     (update-comp* moved-comp @new-start-vnode
                                   keymap removed-keys)
                     (.insertBefore parent
-                     (oget moved-comp "inccup/node")
-                     (oget @prev-start-vnode "inccup/node")))
+                                   (oget moved-comp "inccup/node")
+                                   (oget @prev-start-vnode "inccup/node")))
                   (if (instance? Component @new-start-vnode)
                     (let [new-node (create-comp* @new-start-vnode
                                                  keymap removed-keys)]
                       (oset @new-start-vnode "inccup/node" new-node)
-                      (.insertBefore parent
-                       new-node (oget @prev-start-vnode "inccup/node")))
+                      (.insertBefore
+                       parent new-node
+                       (oget @prev-start-vnode "inccup/node")))
                     (let [new-node (.createTextNode
                                     js/document (.-text @new-start-vnode))]
                       (oset @new-start-vnode "inccup/node" new-node)
-                      (.insertBefore parent
-                       new-node (oget @prev-start-vnode "inccup/node"))))))
-              (vreset! new-start-vnode (vreset! new-start-index inc)))))
+                      (.insertBefore
+                       parent new-node
+                       (oget @prev-start-vnode "inccup/node"))))))
+              (when @new-start-key
+                (oset local-keymap @new-start-key @new-start-index))
+              (inc-or-dec-vnode new-start-vnode new-start-index
+                                new-start-key vnodes inc))))
     (oset vseq "inccup/parent-node" parent)
     (oset vseq "inccup/local-keymap" local-keymap)
     (cond (> @prev-start-index @prev-end-index)
-          (let [last-node (-> (aget vnodes (inc @new-end-index))
-                              (oget "inccup/node"))
-                ref-node (when last-node (.-nextSibling last-node))]
+          (let [ref-vnode (aget vnodes (inc @new-end-index))
+                ref-node (when ref-vnode (oget ref-vnode "inccup/node"))]
             (loop [i @new-start-index]
               (when (<= i @new-end-index)
                 (create-dynamic-in-seq parent ref-node vseq vnodes i
                                        keymap removed-keys)
                 (recur (inc i)))))
           (> @new-start-index @new-end-index)
-          (pop-vseq-from prev-vseq @prev-start-index removed-keys))))
+          (pop-vseq-from-to prev-vseq @prev-start-index
+                            (inc @prev-end-index) removed-keys))
+    (.log js/console local-keymap)))
 
 ;; Taken from
 ;; https://github.com/paldepind/snabbdom/blob/master/snabbdom.js# L133
@@ -587,7 +617,7 @@
                 prev-length (.-length prev-vnodes)
                 min-length (min prev-length length)
                 local-keymap (oget prev-vseq "inccup/local-keymap")]
-            (if (= 0 (goog.object/getCount prev-element))
+            (if (= 0 (goog.object/getCount local-keymap))
               (do
                 (loop [i 0]
                   (when (< i min-length)
@@ -598,7 +628,7 @@
                         (oset local-keymap key i))
                       (recur (inc i)))))
                 (when (< min-length prev-length)
-                  (pop-vseq-from prev-vseq min-length removed-keys))
+                  (pop-vseq-from-to prev-vseq min-length nil removed-keys))
                 (when (< min-length length)
                   (let [ref-node (-> (aget prev-vnodes (dec min-length))
                                      (oget "inccup/node")
@@ -609,12 +639,12 @@
                         (create-dynamic-in-seq parent ref-node prev-vseq
                                                vnodes i keymap removed-keys)
                         (.push prev-vnodes (aget vnodes i))
-                        (recur (inc i))))))))
-            (do
-              (diff-vseq-with-keys prev-vseq prev-vnodes prev-length
-                                   vseq vnodes length local-keymap
-                                   keymap removed-keys)
-              (aset prev-forms index vseq)))
+                        (recur (inc i)))))))
+              (do
+                (diff-vseq-with-keys prev-vseq prev-vnodes prev-length
+                                     vseq vnodes length local-keymap
+                                     keymap removed-keys)
+                (aset prev-forms index vseq))))
           (let [prev-node (oget prev-element "inccup/node")
                 parent (-> prev-node (.-parentNode))]
             (oset vseq "inccup/local-keymap" #js {})
@@ -815,6 +845,6 @@
       (assert (= (.-id comp) (.-id prev-comp)))
       (update-comp* prev-comp comp keymap removed-keys)
       (clean-removed-keys keymap removed-keys)
-      #_(.log js/console keymap)
+      (.log js/console keymap)
       #_(.log js/console removed-keys)
       prev-comp)))

@@ -14,7 +14,6 @@
 
 (set-print-fn! #(.log js/console %))
 
-;; node.isEqual is not ie8 compatible
 (defn node= [node1 node2]
   (let [equal-nodes (volatile! true)]
     (if (not= (.-nodeName node1) (.-nodeName node2))
@@ -129,11 +128,16 @@
 (defn root []
   (.querySelector js/document "#root"))
 
-(defn def1 [x] #h [:div#ii.cc {} x])
+(defn def1 [x] #h [:div#ii.cc {} x 4])
 (defn def2 [x y z] #h [x y z])
 (defn def3 [x] #h [:div#ii.cc x])
 (defn def4 [] #h [:div "<content"])
 (defn def5 [x] #h [x "content"])
+
+#_(deftest test1
+  (testing "test1"
+    (let [comp (render! (new-root) def1 "e")]
+      true)))
 
 (comment
   (-> (render! (new-root) def1 "e")
@@ -159,23 +163,6 @@
   (update! cc def5 :input)
   )
 
-#_(deftest test1
-  (testing "test1"
-    (let [comp (def1 "e")]
-      (is (inccup= @(create-comp comp)
-                   #js ["div" #js {:id "ii", :class "cc"} "e"]))
-      (is (inccup= @(update-comp (def1 3) comp)
-                   #js ["div" #js {:id "ii", :class "cc"} "3"])))
-    (let [comp (def2 :p {:e "e"} "t")]
-      (is (inccup= @(create-comp comp)
-                   #js ["p" #js {:e "e"} nil "t"]))
-      (update-comp (def2 'div {:f "f"} "t") comp)
-      (is (inccup= @comp
-                   #js ["div" #js {:f "f"} nil "t"]))
-      (update-comp (def2 'div 5 "f") comp)
-      (is (inccup= @comp
-                   #js ["div" #js {} "5" "f"])))))
-
 (defn template1 [x] #h [:p#ii.cc {:e x :class x} x "4"])
 (defn template2 [x z] #h [:p {} (count x) #h [:p z]
                           (for [y x] (template1 y))])
@@ -187,66 +174,42 @@
   (update! cc template2 (list 4) {:class "e"})
   )
 
-#_(deftest test2
-  (testing "test2"
-    (let [comp (template2 (list 1 2) nil)]
-      (binding [*effects* []]
-        (is (inccup=
-             @(create-comp comp)
-             #js ["p" #js {} "2"
-                  #inccup/ComponentValue #js ["p" #js {} nil]
-                  #js [#inccup/ComponentValue
-                       #js ["p" #js {:id "ii", :class "cc 1", :e "1"}
-                            "1" "4"]
-                       #inccup/ComponentValue
-                       #js ["p" #js {:id "ii", :class "cc 2", :e "2"}
-                            "2" "4"]]]))
-        #_(pprint (filter #(= (first %) :mount-comp) *effects*))
-        #_(pprint *effects*))
-      (update-comp (template2 (list 1 #h [:div] "e") {:id 3}) comp)
-      (is (inccup=
-           @comp
-           #js ["p" #js {} "3"
-                #inccup/ComponentValue
-                #js ["p" #js {:id "3"} nil]
-                #js [#inccup/ComponentValue
-                     #js ["p" #js {:id "ii", :class "cc 1", :e "1"} "1" "4"]
-                     #inccup/ComponentValue
-                     #js ["p"
-                          #js {:id "ii", :class "cc [object Object]", :e "[object Object]"}
-                          #inccup/ComponentValue #js ["div" #js {}] "4"]
-                     #inccup/ComponentValue
-                     #js ["p"
-                          #js {:id "ii", :class "cc e", :e "e"}
-                          "e" "4"]]]))
-      (update-comp (template2 (list nil) {:class "4" :f "f"}) comp)
-      (is (inccup=
-           @comp
-           #js ["p" #js {} "1"
-                #inccup/ComponentValue
-                #js ["p" #js {:class "4", :f "f"} nil]
-                #js [#inccup/ComponentValue
-                     #js ["p" #js {:id "ii", :class "cc ", :e ""}
-                          nil "4"]]])))))
-
 (defn template3 [x] #h [:p {:class x} nil x])
 (defn template4 [x] #h [:p {}
                         (for [y x]
                           (with-opts! {:key y}
                             (template3 (inc y))))])
+(defn template44 [x z] (let [cc #h [:p]]
+                         #h [:div [:p {}
+                                   (list
+                                    (for [y x]
+                                      (if (and (= 2 y) z)
+                                        (with-opts! {:key "tt"} cc)
+                                        (with-opts! {:key y}
+                                          (template3 (inc y)))))
+                                    5)]
+                             (when (not z)
+                               (with-opts! {:key "tt"} cc))]))
 
 (comment
   (def cc (render! (new-root) template4 (list 1 2)))
   (update! cc template4 (list 2 1))
   (update! cc template4 (list 1 2))
-  (def cc (render! (new-root) template4 (list 1 2)))
-  (update! cc template4 (list 0 1 2))
-  (update! cc template4 (list 3 0 1))
+  #_(def cc (render! (new-root) template4 (list 1 2)))
+  (def cc (render! (new-root) template4 (list 2 3 0)))
+  (update! cc template4 (list 0 1))
+  #_(update! cc template4 (list 3 0 1))
   (update! cc template4 (list 2 3 0))
+  (update! cc template4 (list 3 0 1))
   (def ll (atom (cycle (range 20))))
   (let [n (take 19 @ll)]
     (update! cc template4 n)
-      (do (swap! ll #(drop 19 %)) nil))
+    (do (swap! ll #(drop 19 %)) nil))
+
+  (def cc (render! (new-root) template44 (list 1 2 3) true))
+  (update! cc template44 (list 1 3 2) true)
+  (update! cc template44 (list 1 3 2) false)
+  (update! cc template44 (list 1 2 3) true)
   )
 
 (defn template5 [x y] #h [:p {}
