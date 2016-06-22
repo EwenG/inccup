@@ -1,14 +1,15 @@
 (ns ewen.inccup.incremental.core-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.compiler
-             :refer-macros [with-opts! register-tagged-literal! h]]
+             :refer-macros [with-opts! register-tagged-literal! h]
+             :as comp]
             [ewen.inccup.incremental.vdom :as vdom
              :refer [Component render! update!]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array]
             [goog.dom])
-  (:require-macros [ewen.inccup.incremental.core-test-macros])
-  (:refer-clojure :exclude [-equiv]))
+  (:require-macros [ewen.inccup.incremental.core-test
+                    :refer [multi-defn]]))
 
 (register-tagged-literal! h)
 
@@ -47,76 +48,6 @@
               (recur (inc index) l))))))
     @equal-nodes))
 
-(declare inccup=)
-
-(defprotocol InccupEquiv
-  (-equiv [o other]))
-
-(deftype ComponentValue [value]
-  InccupEquiv
-  (-equiv [_ other]
-    (if (instance? Component other)
-      (inccup= value (.-value other))
-      false)))
-
-(extend-type Component
-  IPrintWithWriter
-  (-pr-writer [c writer opts]
-    (-write writer "#inccup/ComponentValue ")
-    (pr-writer (.-value c) writer opts)))
-
-(extend-type Component
-  InccupEquiv
-  (-equiv [c other]
-    (if (instance? ComponentValue other)
-      (inccup= (.-value c) (.-value other))
-      false)))
-
-(extend-type array
-  InccupEquiv
-  (-equiv [a other]
-    (if (instance? js/Array other)
-      (goog.array/equals a other inccup=)
-      false)))
-
-(extend-type object
-  InccupEquiv
-  (-equiv [o other]
-    (if (instance? js/Object other)
-      (let [equal? (volatile! true)]
-        (goog.object/forEach
-         o (fn [v k _]
-             (when-not (and (goog.object/containsKey other k)
-                            (inccup= v (aget other k)))
-               (vreset! equal? false))))
-        (goog.object/forEach
-         other (fn [v k _]
-                 (when-not (goog.object/containsKey o k)
-                   (vreset! equal? false))))
-        @equal?)
-      false)))
-
-(extend-type default
-  InccupEquiv
-  (-equiv [x o] (= x o)))
-
-(defn inccup=
-  ([x] true)
-  ([x y]
-   (cond
-     (nil? x)
-     (nil? y)
-     (implements? IEquiv x)
-     (cljs.core/-equiv x y)
-     :else
-     (-equiv x y)))
-  ([x y & more]
-   (if (inccup= x y)
-     (if (next more)
-       (recur y (first more) (next more))
-       (inccup= y (first more)))
-     false)))
-
 (defn new-root []
   (let [old-root (.getElementById js/document "root")
         new-root (goog.dom/createDom "div" #js {:id "root"})]
@@ -128,7 +59,8 @@
 (defn root []
   (.querySelector js/document "#root"))
 
-(defn def1 [x] #h [:div#ii.cc {} x 4])
+(multi-defn comp1 [x] (h [:div#ii.cc {} x 4]))
+
 (defn def2 [x y z] #h [x y z])
 (defn def3 [x] #h [:div#ii.cc x])
 (defn def4 [] #h [:div "<content"])
@@ -140,6 +72,9 @@
       true)))
 
 (comment
+  (render! (new-root) comp1 "e")
+  (str (comp1-string "e"))
+
   (-> (render! (new-root) def1 "e")
       (update! def1 "f")
       (update! def1 "g"))
