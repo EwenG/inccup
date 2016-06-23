@@ -6,5 +6,7 @@
   :source-paths ["src"]
   :test-paths ["test"]
   :dependencies [[org.clojure/clojure "1.9.0-alpha4"]
-                 [org.clojure/clojurescript "1.9.36"]]
+                 [org.clojure/clojurescript "1.9.36"]
+                 [org.clojure/data.xml "0.0.8"]
+                 [backtick "0.3.3"]]
   :profiles {:dev {:dependencies [[org.clojure/test.check "0.9.0"]]}})

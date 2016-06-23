@@ -43,7 +43,7 @@
         (instance? DynamicLeaf tag)
         `(str
           (let [tag# (name ~(get-dynamic-form dynamic tag))]
-            (if (and (empty? content) (get runtime/void-tags tag#))
+            (if (and ~(empty? content) (get runtime/void-tags tag#))
               (str "<" tag# ~(compile-attrs dynamic attrs) " />")
               (str "<" tag# ~(compile-attrs dynamic attrs) ">"
                    ~@content
@@ -56,7 +56,7 @@
               ~(str "</" tag ">"))))
     (instance? DynamicLeaf x) `(runtime/form->string
                                 ~(get-dynamic-form dynamic x))
-    :else (-> x util/escape-string runtime/wrap-text)))
+    :else (-> x util/escape-string)))
 
 (defn compile-string [forms]
   (let [[static dynamic]

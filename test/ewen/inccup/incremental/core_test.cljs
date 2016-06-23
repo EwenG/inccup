@@ -5,6 +5,8 @@
              :as comp]
             [ewen.inccup.incremental.vdom :as vdom
              :refer [Component render! update!]]
+            [ewen.inccup.common.utils-test
+             :refer [node-to-string root new-root]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array]
             [goog.dom])
@@ -15,82 +17,97 @@
 
 (set-print-fn! #(.log js/console %))
 
-(defn node= [node1 node2]
-  (let [equal-nodes (volatile! true)]
-    (if (not= (.-nodeName node1) (.-nodeName node2))
-      (vreset! equal-nodes false)
-      (let [attrs1 (.-attributes node1)
-            attrs2 (.-attributes node2)]
-        (when (not (and (nil? attrs1) (nil? attrs2)))
-          (if (not= (.-length attrs1) (.-length attrs2))
-            (vreset! equal-nodes false)
-            (loop [index 0
-                   l (.-length attrs1)]
-              (when (and @equal-nodes (< index l))
-                (when (not= (.-name (aget attrs1 index))
-                            (.-name (aget attrs2 index)))
-                  (vreset! equal-nodes false))
-                (when (not= (.-value (aget attrs1 index))
-                            (.-value (aget attrs2 index)))
-                  (vreset! equal-nodes false))
-                (recur (inc index) l)))))))
-    (when @equal-nodes
-      (let [children1 (.-childNodes node1)
-            children2 (.-childNodes node2)]
-        (if (not= (.-length children1) (.-length children2))
-          (vreset! equal-nodes false)
-          (loop [index 0
-                 l (.-length children1)]
-            (when (and @equal-nodes (< index l))
-              (when-not (node= (aget children1 index)
-                               (aget children2 index))
-                (vreset! equal-nodes false))
-              (recur (inc index) l))))))
-    @equal-nodes))
-
-(defn new-root []
-  (let [old-root (.getElementById js/document "root")
-        new-root (goog.dom/createDom "div" #js {:id "root"})]
-    (if old-root
-      (goog.dom/replaceNode new-root old-root)
-      (goog.dom/appendChild (.-body js/document) new-root))
-    new-root))
-
-(defn root []
-  (.querySelector js/document "#root"))
-
-(multi-defn comp1 [x] (h [:div#ii.cc {} x 4]))
-
-(defn def2 [x y z] #h [x y z])
-(defn def3 [x] #h [:div#ii.cc x])
-(defn def4 [] #h [:div "<content"])
-(defn def5 [x] #h [x "content"])
-
-#_(deftest test1
-  (testing "test1"
-    (let [comp (render! (new-root) def1 "e")]
-      true)))
+(defn ff [] (h [:tbody {:e "e"} [:p [:tbody "e"]]]))
 
 (comment
-  (render! (new-root) comp1 "e")
-  (str (comp1-string "e"))
+  (def cc (render! (new-root) ff))
+  (node-to-string (root))
+  )
 
-  (-> (render! (new-root) def1 "e")
-      (update! def1 "f")
-      (update! def1 "g"))
+(def ^:dynamic *comp* nil)
 
-  (def cc (render! (new-root) def2 :p {:e "e"} "t"))
-  (update! cc def2 :p {:class "c2"} "t")
+(multi-defn simple1 [x] (h [:div#ii.cc {} x 4]))
+(multi-defn simple2 [x y z] (h [x y z]))
+(multi-defn simple3 [x] #h [:div#ii.cc x])
+(multi-defn simple4 [] #h [:div "<content"])
+(multi-defn simple5 [x] #h [x "content"])
 
-  (-> (render! (new-root) def2 :p {:class "c"} "t")
-      (update! def2 :p {:class "c2" :e "e"} "t"))
+#_(deftest test-simple1
+  (testing "test-simple1"
+    (let [comp-fn simple-comp1
+          comp-fn-string simple-comp1-string
+          comp (render! (new-root) comp-fn "e")]
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string "e"))))
+      (update! comp comp-fn "f")
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string "f"))))
+      (update! comp comp-fn "g")
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string "g")))))))
 
-  (-> (render! (new-root) def3 "e")
-      (update! def3 "f")
-      (update! def3 {:id "i"}))
+#_(deftest test-simple2
+  (testing "test-simple2"
+    (let [comp-fn simple-comp2
+          comp-fn-string simple-comp2-string
+          comp (render! (new-root) comp-fn :p {:e "e"} "t")]
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string :p {:e "e"} "t"))))
+      (update! comp comp-fn :p {:class "c2"} "t")
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string :p {:class "c2"} "t"))))
+      (update! comp comp-fn :p {:class "c2" :e "e"} "t")
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string :p {:class "c2" :e "e"} "t")))))))
 
-  (-> (render! (new-root) def4)
-      (update! def4))
+#_(deftest test-simple3
+  (testing "test-simple3"
+    (let [comp-fn simple-comp3
+          comp-fn-string simple-comp3-string
+          comp (render! (new-root) comp-fn "e")]
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string "e"))))
+      (update! comp comp-fn "f")
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string "f"))))
+      (update! comp comp-fn {:id "i"})
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string {:id "i"})))))))
+
+(comment
+  (let [comp-fn simple-comp4
+        comp-fn-string simple-comp4-string
+        comp (render! (new-root) comp-fn)]
+    (.-innerHTML (root))
+    #_(str (comp-fn-string))
+    #_(update! comp comp-fn)
+    #_(str (comp-fn-string)))
+  )
+
+(comment
+  (node-to-string (root))
+  )
+
+#_(deftest test-simple5
+  (testing "test-simple5"
+    (let [comp-fn simple-comp5
+          comp-fn-string simple-comp5-string
+          comp (render! (new-root) comp-fn :p)]
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string :p))))
+      (update! comp comp-fn :div)
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string :div))))
+      (update! comp comp-fn :p)
+      (is (= (.-innerHTML (root))
+             (str (comp-fn-string :p))))
+      (update! comp comp-fn :input)
+      #_(is (= (.-innerHTML (root))
+               (str (comp-fn-string :input))))
+      (.-innerHTML (root))
+      (str (comp-fn-string :input)))))
+
+(comment
 
   (def cc (render! (new-root) def5 :p))
   (update! cc def5 :div)
@@ -181,4 +198,10 @@
   (def cc (render! (new-root) large #h [:div 1 2 3] 3))
   (update! cc large (large (large 3 (large 5 6)) 2) (large 3 4))
 
+  )
+
+
+(comment
+  (def cc (render! (new-root) (fn [] (h [:div {} (clojure.core/list nil)]))))
+  (node-to-string (root))
   )

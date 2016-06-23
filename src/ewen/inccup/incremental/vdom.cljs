@@ -494,8 +494,7 @@
                 (recur (inc i)))))
           (> @new-start-index @new-end-index)
           (pop-vseq-from-to prev-vseq @prev-start-index
-                            (inc @prev-end-index) removed-keys))
-    (.log js/console local-keymap)))
+                            (inc @prev-end-index) removed-keys))))
 
 ;; Taken from
 ;; https://github.com/paldepind/snabbdom/blob/master/snabbdom.js# L133
@@ -845,6 +844,6 @@
       (assert (= (.-id comp) (.-id prev-comp)))
       (update-comp* prev-comp comp keymap removed-keys)
       (clean-removed-keys keymap removed-keys)
-      (.log js/console keymap)
+      #_(.log js/console keymap)
       #_(.log js/console removed-keys)
       prev-comp)))

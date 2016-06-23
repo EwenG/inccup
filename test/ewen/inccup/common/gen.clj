@@ -1,5 +1,6 @@
 (ns ewen.inccup.common.gen
-  (:require [ewen.inccup.compiler :as comp :refer [h]]
+  (:require [ewen.inccup.common.utils-test :as utils]
+            [ewen.inccup.compiler :as comp :refer [h]]
             [ewen.inccup.common.spec]
             [clojure.spec :as spec]
             [clojure.test :refer [is]]
@@ -8,22 +9,39 @@
             [clojure.test.check.properties :as prop]
             [cljs.analyzer.api :as ana-api]
             [cljs.compiler.api :as comp-api]
-            [cljs.repl]))
+            [cljs.repl]
+            [clojure.data.xml :as xml]))
+
+(def downcase-char-alpha-gen
+  (gen/fmap char
+            (gen/one-of [(gen/choose 97 122)])))
+
+(def downcase-char-alphanumeric-gen
+  (gen/fmap char
+            (gen/one-of [(gen/choose 48 57)
+                         (gen/choose 97 122)])))
 
 (def tag-name-gen
+  "Generator for keywords starting with an downcase alphanumeric char,
+  other chars are downcase alphanumeric"
   (gen/fmap (fn [[f-char r-chars]]
               (-> (into [f-char] r-chars) clojure.string/join keyword))
-            (gen/tuple gen/char-alpha (gen/vector gen/char-alphanumeric))))
+            (gen/tuple downcase-char-alpha-gen
+                       (gen/vector downcase-char-alphanumeric-gen))))
 
 (def attr-name-gen
+  "Generator for keywords starting with an alphanumeric char, other chars
+  are alphanumeric or \\-"
   (gen/fmap (fn [[f-char r-chars]]
               (-> (into [f-char] r-chars) clojure.string/join keyword))
-            (gen/tuple gen/char-alpha
+            (gen/tuple downcase-char-alpha-gen
                        (gen/vector
-                        (gen/one-of [gen/char-alphanumeric
+                        (gen/one-of [downcase-char-alphanumeric-gen
                                      (gen/return\-)])))))
 
-(def keyword-gen (gen/one-of [gen/keyword gen/keyword-ns]))
+(def keyword-gen
+  "Generator for namespaced keywords"
+  (gen/one-of [gen/keyword gen/keyword-ns]))
 
 (def html-tag-gen
   (gen/elements
@@ -47,7 +65,10 @@
   #{:tfoot :thead :th :html :head :td :title :colgroup :caption :col :tr
     :tbody :body :style :textarea :iframe :select :table})
 
-(defn make-tag-gen [tag-syms]
+(defn make-tag-gen
+  "Generator for literal tags are a symbol amongs the one provided.
+  The symbols represent parametrized tags"
+  [tag-syms]
   (->> (if (empty? tag-syms)
          (gen/one-of [tag-name-gen html-tag-gen])
          (gen/one-of [tag-name-gen html-tag-gen
@@ -82,11 +103,13 @@
            ;; max is the max number of values for a given tag symbol param
            (gen/vector tag-name-gen 1 20)
            ;; Number of tag symbols parameters
-           {:max-elements 5}))
+           {:max-elements 5
+            :min-elements 1}))
 
 (def attr-vals-gen
   (gen/map syms-gen (gen/vector gen/string-ascii 1 20)
-           {:max-elements 5}))
+           {:max-elements 5
+            :min-elements 1}))
 
 (comment
   (gen/sample tag-syms-gen)
@@ -133,26 +156,10 @@
              {:optimizations :simple})))})
        (make-form-gen tag-gen)))))
 
-(defn eval-js [repl-env js]
-  (let [{:keys [status value]}
-        (cljs.repl/-evaluate repl-env "<cljs repl>" 1 js)]
-    (is (= :success status))
-    value))
-
-(defn compile-cljs [cljs-form]
-  (binding [cljs.analyzer/*cljs-ns* 'ewen.inccup.common.gen-client]
-    (comp-api/emit
-     (ana-api/no-warn
-      (ana-api/analyze
-       (assoc (ana-api/empty-env) :context :expr)
-       cljs-form
-       {:optimizations :simple})))))
-
-(defn gen-client-sym [sym]
-  (symbol "ewen.inccup.common.gen-client" (str sym)))
-
-(def gen-client-ns "ewen.inccup.common.gen-client")
-(def vdom-ns "ewen.inccup.incremental.vdom")
+(defmacro with-eval [& body]
+  `(utils/eval-js
+    repl-env
+    (utils/compile-cljs ~@body)))
 
 (defn make-valid-form-prop [repl-env]
   (prop/for-all
@@ -163,63 +170,93 @@
          attr-vals-syms (keys attr-vals)
          tag-vals (vals tags)
          attr-vals-vals (vals attr-vals)
-         compile-fn `(~'fn ~'x [~@tag-syms ~@attr-vals-syms]
-                      (h ~form))
-         string-clj (-> `(apply ~compile-fn
+         string-clj (-> `(apply (fn [~@tag-syms ~@attr-vals-syms]
+                                  (h ~form))
                                 [~@(map first tag-vals)
                                  ~@(map first attr-vals-vals)])
                         eval str)]
 
-     #_(eval-js repl-env
-                (compile-cljs
-                 `(def ~(gen-client-sym 'params) (quote ~params))))
-
      ;; Def the string templating fn
-     (eval-js repl-env
-              (binding [comp/*cljs-output-mode* :string]
-                (compile-cljs
-                 `(set! ~(gen-client-sym 'string-fn-cljs) ~compile-fn))))
+     (binding [comp/*cljs-output-mode* :string]
+       (with-eval
+         (utils/cljs-test-quote
+          (set! gen-client/string-fn-cljs
+                (fn [~@tag-syms ~@attr-vals-syms]
+                  (comp/h ~form))))))
 
      ;; Def the component fn
-     (eval-js repl-env
-              (with-redefs [comp/cljs-env? (constantly true)]
-                (compile-cljs
-                 `(set! ~(gen-client-sym 'component) ~compile-fn))))
+     (with-redefs [comp/cljs-env? (constantly true)]
+       (with-eval
+         (utils/cljs-test-quote
+          (set! gen-client/component-fn
+                (fn [~@tag-syms ~@attr-vals-syms]
+                  (comp/h ~form))))))
 
      ;; Check that the clojure generated string is equal to the cljs
      ;; generated string for initial params
      (is (= string-clj
-            (eval-js repl-env
-                     (compile-cljs
-                      `(apply ~(gen-client-sym 'string-fn-cljs)
-                              [~@(map first tag-vals)
-                               ~@(map first attr-vals-vals)])))))
-
-     ;; Render the clojure generated string for initial params
-     (eval-js repl-env
-              (compile-cljs
-               `(goog.object/set (~(symbol gen-client-ns "new-root-string"))
-                               "innerHTML" ~string-clj)))
+            (with-eval
+              (utils/cljs-test-quote
+               (c/str (c/apply gen-client/string-fn-cljs
+                               [~@(map first tag-vals)
+                                ~@(map first attr-vals-vals)]))))))
 
      ;; Render the clojurescript component for initial params
-     (eval-js repl-env
-              (compile-cljs
-               `(~(symbol vdom-ns "render!")
-                 (~(symbol gen-client-ns "new-root-comp"))
-                 ~(symbol gen-client-ns "component")
-                 ~@(map first tag-vals)
-                 ~@(map first attr-vals-vals))))
+     (with-eval
+       (utils/cljs-test-quote
+        (set! gen-client/component
+              (vdom/render! (utils/new-root) gen-client/component-fn
+                            ~@(map first tag-vals)
+                            ~@(map first attr-vals-vals)))))
 
+     ;; Check that the clojure generated string is equal to the rendered
+     ;; component
+     (let [string-inc (with-eval
+                        (utils/cljs-test-quote
+                         (utils/node-to-string (utils/root))))]
+       (is (= (xml/parse (java.io.StringReader. string-clj))
+              (xml/parse (java.io.StringReader. string-inc)))))
 
-     (= "true"
-        (eval-js repl-env
-                 (compile-cljs
-                  `(~(symbol gen-client-ns "roots-equal?")))))
-     #_(is (= "true"
-            (eval-js repl-env
-                     (compile-cljs
-                      `(~(symbol gen-client-ns "roots-equal?"))))))
-     #_true)))
+     (loop [tag-vals-i 0
+            attr-vals-vals-i 0
+            i 0
+            l (max (count tag-vals) (count attr-vals-vals))]
+       (when (< i l)
+         (let [tag-vals (map #(get % tag-vals-i) tag-vals)
+               attr-vals-vals (map #(get % attr-vals-vals-i)
+                                   attr-vals-vals)
+               ;; Update the clojure string with the new params
+               string-clj (-> `(apply (fn [~@tag-syms ~@attr-vals-syms]
+                                        (h ~form))
+                                      [~@tag-vals
+                                       ~@attr-vals-vals])
+                              eval str)])
+
+         ;; Update the clojurescript component
+         (with-eval
+           (utils/cljs-test-quote
+            (vdom/update! gen-client/component gen-client/component-fn
+                          ~@tag-vals
+                          ~@attr-vals-vals)))
+
+         ;; Check that the clojure generated string is equal to the
+         ;; rendered component
+         (let [string-inc (with-eval
+                            (utils/cljs-test-quote
+                             (utils/node-to-string (utils/root))))]
+           #_(is (= (xml/parse (java.io.StringReader. string-clj))
+                    (xml/parse (java.io.StringReader. string-inc)))))
+
+         (recur (if (>= tag-vals-i (dec (count tag-vals)))
+                  0
+                  (inc tag-vals-i))
+                (if (>= attr-vals-vals-i (dec (count attr-vals-vals)))
+                  0
+                  (inc attr-vals-vals-i))
+                (inc i)
+                l)))
+
+     true)))
 
 (comment
 
@@ -230,5 +267,5 @@
   (gen/sample form-gen 10)
 
   (require '[ewen.replique.server-cljs :refer [repl-env]])
-  (tc/quick-check 30 (gen/no-shrink (make-valid-form-prop repl-env)))
+  (tc/quick-check 10 (gen/no-shrink (make-valid-form-prop repl-env)))
   )

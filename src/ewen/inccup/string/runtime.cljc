@@ -27,13 +27,8 @@
   [attrs]
   (apply str (map render-attr attrs)))
 
-(defn wrap-text [text]
-  (if (= "" text)
-    text
-    (str "<!--inccup/text-start-->" text "<!--inccup/text-end-->")))
-
 (defn form->string [form]
   (cond
     (instance? InccupString form) (str form)
     (seq? form) (apply str (map form->string form))
-    :else (-> form util/escape-string wrap-text)))
+    :else (-> form util/escape-string)))
