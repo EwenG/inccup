@@ -9,20 +9,17 @@
             [clojure.test.check.properties :as prop]
             [cljs.analyzer.api :as ana-api]
             [cljs.compiler.api :as comp-api]
-            [cljs.repl]
             [clojure.data.xml :as xml]))
 
 (def downcase-char-alpha-gen
-  (gen/fmap char
-            (gen/one-of [(gen/choose 97 122)])))
+  (gen/fmap char (gen/one-of [(gen/choose 97 122)])))
 
 (def downcase-char-alphanumeric-gen
-  (gen/fmap char
-            (gen/one-of [(gen/choose 48 57)
-                         (gen/choose 97 122)])))
+  (gen/fmap char (gen/one-of [(gen/choose 48 57)
+                              (gen/choose 97 122)])))
 
 (def tag-name-gen
-  "Generator for keywords starting with an downcase alphanumeric char,
+  "Generator for keywords starting with an downcase alpha char,
   other chars are downcase alphanumeric"
   (gen/fmap (fn [[f-char r-chars]]
               (-> (into [f-char] r-chars) clojure.string/join keyword))
@@ -30,7 +27,7 @@
                        (gen/vector downcase-char-alphanumeric-gen))))
 
 (def attr-name-gen
-  "Generator for keywords starting with an alphanumeric char, other chars
+  "Generator for keywords starting with an alpha char, other chars
   are alphanumeric or \\-"
   (gen/fmap (fn [[f-char r-chars]]
               (-> (into [f-char] r-chars) clojure.string/join keyword))
@@ -40,7 +37,7 @@
                                      (gen/return\-)])))))
 
 (def keyword-gen
-  "Generator for namespaced keywords"
+  "Generator for namespaced or not namespaced keywords"
   (gen/one-of [gen/keyword gen/keyword-ns]))
 
 (def html-tag-gen
@@ -54,31 +51,31 @@
      :meta :meter :nav :noscript :object :ol :optgroup :option :output :p
      :param :picture :pre :progress :q :rp :rt :ruby :s :samp :script
      :section :small :source :span :strong :sub :summary :sup
-     :time :track :u :ul :var :video :wbr}))
-
-;;TODO handle textarea
-;;TODO handle iframe
-;;TODO handle select
-;;TODO handle table
-
-(def html-tags-with-context
-  #{:tfoot :thead :th :html :head :td :title :colgroup :caption :col :tr
-    :tbody :body :style :textarea :iframe :select :table})
+     :time :track :u :ul :var :video :wbr :tfoot :thead :th :td :title
+     :colgroup :caption :col :tr :tbody :select :table :textarea :iframe
+     :html :head  :body :style}))
 
 (defn make-tag-gen
-  "Generator for literal tags are a symbol amongs the one provided.
+  "Generator for literal tags are a symbol amongs the ones provided.
   The symbols represent parametrized tags"
   [tag-syms]
-  (->> (if (empty? tag-syms)
-         (gen/one-of [tag-name-gen html-tag-gen])
-         (gen/one-of [tag-name-gen html-tag-gen
-                      (gen/elements tag-syms)]))
-       (gen/such-that #(not (contains? html-tags-with-context %)))))
+  (if (empty? tag-syms)
+    (gen/one-of [tag-name-gen html-tag-gen])
+    (gen/one-of [tag-name-gen html-tag-gen
+                 (gen/elements tag-syms)])))
 
 (def attrs-gen (gen/map attr-name-gen gen/string-ascii))
 (def child-gen (gen/one-of [gen/string-ascii (gen/return nil)]))
+
+(defn make-child-seq-gen [child-gen])
 (def child-seq-gen (gen/fmap (fn [children] `(list ~@children))
                              (gen/list child-gen)))
+
+(comment
+  (gen/sample child-seq-gen)
+
+  (map :form (gen/sample form-gen))
+  )
 
 (defn make-form-container-gen [tag-gen]
   (fn [child-gen]
@@ -100,16 +97,14 @@
 
 (def tag-syms-gen
   (gen/map syms-gen
-           ;; max is the max number of values for a given tag symbol param
-           (gen/vector tag-name-gen 1 20)
+           ;; Generates 10 values for each symbol
+           (gen/vector tag-name-gen 10 10)
            ;; Number of tag symbols parameters
-           {:max-elements 5
-            :min-elements 1}))
+           {:max-elements 5}))
 
 (def attr-vals-gen
-  (gen/map syms-gen (gen/vector gen/string-ascii 1 20)
-           {:max-elements 5
-            :min-elements 1}))
+  (gen/map syms-gen (gen/vector gen/string-ascii 10 10)
+           {:max-elements 5}))
 
 (comment
   (gen/sample tag-syms-gen)
@@ -134,31 +129,12 @@
       (gen/fmap
        (fn [form]
          {:params params
-          :form form
-          #_:string-fn-cljs
-          #_(binding [comp/*cljs-output-mode* :string]
-            (comp-api/emit
-             (ana-api/no-warn
-              (ana-api/analyze
-               (ana-api/empty-env)
-               `(apply
-                 (fn [~@tag-syms ~@attr-vals-syms]
-                   (h ~form))
-                 [~@tag-vals ~@attr-vals-vals])
-               {:optimizations :simple}))))
-          #_:component
-          #_(comp-api/emit
-           (ana-api/no-warn
-            (ana-api/analyze
-             (assoc (ana-api/empty-env) :context :expr)
-             `(fn [~@tag-syms ~@attr-vals-syms]
-                (h ~form))
-             {:optimizations :simple})))})
+          :form form})
        (make-form-gen tag-gen)))))
 
-(defmacro with-eval [& body]
+(defmacro with-eval [repl-env & body]
   `(utils/eval-js
-    repl-env
+    ~repl-env
     (utils/compile-cljs ~@body)))
 
 (defn make-valid-form-prop [repl-env]
@@ -179,6 +155,7 @@
      ;; Def the string templating fn
      (binding [comp/*cljs-output-mode* :string]
        (with-eval
+         repl-env
          (utils/cljs-test-quote
           (set! gen-client/string-fn-cljs
                 (fn [~@tag-syms ~@attr-vals-syms]
@@ -187,6 +164,7 @@
      ;; Def the component fn
      (with-redefs [comp/cljs-env? (constantly true)]
        (with-eval
+         repl-env
          (utils/cljs-test-quote
           (set! gen-client/component-fn
                 (fn [~@tag-syms ~@attr-vals-syms]
@@ -196,6 +174,7 @@
      ;; generated string for initial params
      (is (= string-clj
             (with-eval
+              repl-env
               (utils/cljs-test-quote
                (c/str (c/apply gen-client/string-fn-cljs
                                [~@(map first tag-vals)
@@ -203,6 +182,7 @@
 
      ;; Render the clojurescript component for initial params
      (with-eval
+       repl-env
        (utils/cljs-test-quote
         (set! gen-client/component
               (vdom/render! (utils/new-root) gen-client/component-fn
@@ -212,28 +192,27 @@
      ;; Check that the clojure generated string is equal to the rendered
      ;; component
      (let [string-inc (with-eval
+                        repl-env
                         (utils/cljs-test-quote
                          (utils/node-to-string (utils/root))))]
        (is (= (xml/parse (java.io.StringReader. string-clj))
               (xml/parse (java.io.StringReader. string-inc)))))
 
-     (loop [tag-vals-i 0
-            attr-vals-vals-i 0
-            i 0
-            l (max (count tag-vals) (count attr-vals-vals))]
+     (loop [i 1
+            l 2]
        (when (< i l)
-         (let [tag-vals (map #(get % tag-vals-i) tag-vals)
-               attr-vals-vals (map #(get % attr-vals-vals-i)
-                                   attr-vals-vals)
+         (let [tag-vals (map #(get % i) tag-vals)
+               attr-vals-vals (map #(get % i) attr-vals-vals)
                ;; Update the clojure string with the new params
                string-clj (-> `(apply (fn [~@tag-syms ~@attr-vals-syms]
                                         (h ~form))
                                       [~@tag-vals
                                        ~@attr-vals-vals])
-                              eval str)])
+                              eval str)]
 
          ;; Update the clojurescript component
          (with-eval
+           repl-env
            (utils/cljs-test-quote
             (vdom/update! gen-client/component gen-client/component-fn
                           ~@tag-vals
@@ -242,19 +221,13 @@
          ;; Check that the clojure generated string is equal to the
          ;; rendered component
          (let [string-inc (with-eval
+                            repl-env
                             (utils/cljs-test-quote
                              (utils/node-to-string (utils/root))))]
-           #_(is (= (xml/parse (java.io.StringReader. string-clj))
-                    (xml/parse (java.io.StringReader. string-inc)))))
+           (is (= (xml/parse (java.io.StringReader. string-clj))
+                  (xml/parse (java.io.StringReader. string-inc)))))
 
-         (recur (if (>= tag-vals-i (dec (count tag-vals)))
-                  0
-                  (inc tag-vals-i))
-                (if (>= attr-vals-vals-i (dec (count attr-vals-vals)))
-                  0
-                  (inc attr-vals-vals-i))
-                (inc i)
-                l)))
+         (recur (inc i) l))))
 
      true)))
 
@@ -266,6 +239,15 @@
   (gen/sample html-tag-gen)
   (gen/sample form-gen 10)
 
+  (with-eval
+    ewen.replique.server-cljs/repl-env
+    (utils/cljs-test-quote
+     (~'ns ~'cljs.user
+      (:require [ewen.inccup.common.gen-client]))))
+
   (require '[ewen.replique.server-cljs :refer [repl-env]])
-  (tc/quick-check 10 (gen/no-shrink (make-valid-form-prop repl-env)))
+
+  (tc/quick-check
+   80 (gen/no-shrink
+        (make-valid-form-prop ewen.replique.server-cljs/repl-env)))
   )

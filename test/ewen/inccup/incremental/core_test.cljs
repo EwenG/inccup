@@ -202,6 +202,7 @@
 
 
 (comment
-  (def cc (render! (new-root) (fn [] (h [:div {} (clojure.core/list nil)]))))
+  (def cc (render! (new-root)
+                   (fn [] (h [:div {} [:iframe "e"]]))))
   (node-to-string (root))
   )
