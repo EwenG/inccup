@@ -67,7 +67,6 @@
 (def attrs-gen (gen/map attr-name-gen gen/string-ascii))
 (def child-gen (gen/one-of [gen/string-ascii (gen/return nil)]))
 
-(defn make-child-seq-gen [child-gen])
 (def child-seq-gen (gen/fmap (fn [children] `(list ~@children))
                              (gen/list child-gen)))
 
