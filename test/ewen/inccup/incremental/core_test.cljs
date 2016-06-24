@@ -13,7 +13,7 @@
   (:require-macros [ewen.inccup.incremental.core-test
                     :refer [multi-defn]]))
 
-(register-tagged-literal! h)
+#_(register-tagged-literal! h)
 
 (set-print-fn! #(.log js/console %))
 
@@ -28,9 +28,9 @@
 
 (multi-defn simple1 [x] (h [:div#ii.cc {} x 4]))
 (multi-defn simple2 [x y z] (h [x y z]))
-(multi-defn simple3 [x] #h [:div#ii.cc x])
-(multi-defn simple4 [] #h [:div "<content"])
-(multi-defn simple5 [x] #h [x "content"])
+(multi-defn simple3 [x] (h [:div#ii.cc x]))
+(multi-defn simple4 [] (h [:div "<content"]))
+(multi-defn simple5 [x] (h [x "content"]))
 
 #_(deftest test-simple1
   (testing "test-simple1"
@@ -115,24 +115,24 @@
   (update! cc def5 :input)
   )
 
-(defn template1 [x] #h [:p#ii.cc {:e x :class x} x "4"])
-(defn template2 [x z] #h [:p {} (count x) #h [:p z]
-                          (for [y x] (template1 y))])
+(defn template1 [x] (h [:p#ii.cc {:e x :class x} x "4"]))
+(defn template2 [x z] (h [:p {} (count x) (h [:p z])
+                          (for [y x] (template1 y))]))
 
 (comment
   (def cc (render! (new-root) template2 (list 1 2) nil))
-  (update! cc template2 (list 1 3) #h [:div])
+  (update! cc template2 (list 1 3) (h [:div]))
   (update! cc template2 (list 4) {:class "c"})
   (update! cc template2 (list 4) {:class "e"})
   )
 
-(defn template3 [x] #h [:p {:class x} nil x])
-(defn template4 [x] #h [:p {}
+(defn template3 [x] (h [:p {:class x} nil x]))
+(defn template4 [x] (h [:p {}
                         (for [y x]
                           (with-opts! {:key y}
-                            (template3 (inc y))))])
-(defn template44 [x z] (let [cc #h [:p]]
-                         #h [:div [:p {}
+                            (template3 (inc y))))]))
+(defn template44 [x z] (let [cc (h [:p])]
+                         (h [:div [:p {}
                                    (list
                                     (for [y x]
                                       (if (and (= 2 y) z)
@@ -141,7 +141,7 @@
                                           (template3 (inc y)))))
                                     5)]
                              (when (not z)
-                               (with-opts! {:key "tt"} cc))]))
+                               (with-opts! {:key "tt"} cc))])))
 
 (comment
   (def cc (render! (new-root) template4 (list 1 2)))
@@ -164,11 +164,11 @@
   (update! cc template44 (list 1 2 3) true)
   )
 
-(defn template5 [x y] #h [:p {}
-                          (let [cc #h [:div "else"]]
+(defn template5 [x y] (h [:p {}
+                          (let [cc (h [:div "else"])]
                             (if y
-                              #h [:div (with-opts! {:key 1} cc)]
-                              (with-opts! {:key 1} cc)))])
+                              (h [:div (with-opts! {:key 1} cc)])
+                              (with-opts! {:key 1} cc)))]))
 
 (comment
   (def cc (render! (new-root) template5 3 false))
@@ -190,12 +190,12 @@
 
 
 
-(defn large [a b] #h [:div {} "e" [:p {} "e" 3] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3]]] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} a 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" b]]]]]]]]]]]]]]]]]] [:p {} "e" 3]])
+(defn large [a b] (h [:div {} "e" [:p {} "e" 3] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3]]] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} a 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" b]]]]]]]]]]]]]]]]]] [:p {} "e" 3]]))
 
 
 
 (comment
-  (def cc (render! (new-root) large #h [:div 1 2 3] 3))
+  (def cc (render! (new-root) large (h [:div 1 2 3]) 3))
   (update! cc large (large (large 3 (large 5 6)) 2) (large 3 4))
 
   )
