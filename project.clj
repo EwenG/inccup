@@ -6,7 +6,13 @@
   :source-paths ["src"]
   :test-paths ["test"]
   :dependencies [[org.clojure/clojure "1.9.0-alpha4"]
-                 [org.clojure/clojurescript "1.9.36"]
-                 [org.clojure/data.xml "0.0.8"]
-                 [backtick "0.3.3"]]
-  :profiles {:dev {:dependencies [[org.clojure/test.check "0.9.0"]]}})
+                 [org.clojure/clojurescript "1.9.36"]]
+  :profiles {:dev {:dependencies [[org.clojure/test.check "0.9.0"]
+                                  [backtick "0.3.3"]
+                                  [org.clojure/data.xml "0.0.8"]]}}
+  :gen-tests-runs-nb 10
+  :aliases {"gen-tests" ["run" "-m"
+                         "ewen.inccup.tests-runner/run-gen-tests"
+                         :project/gen-tests-runs-nb]
+            "compiler-tests"
+            ["run" "-m" "ewen.inccup.tests-runner/run-compiler-tests"]})

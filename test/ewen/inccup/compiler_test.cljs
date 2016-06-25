@@ -1,19 +1,16 @@
-(ns ewen.inccup.incremental.core-test
+(ns ewen.inccup.compiler-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
             [ewen.inccup.compiler
              :refer-macros [with-opts! register-tagged-literal! h]
              :as comp]
             [ewen.inccup.incremental.vdom :as vdom
              :refer [Component render! update!]]
-            [ewen.inccup.common.utils-test
+            [ewen.inccup.utils-test
              :refer [node-to-string root new-root]]
             [cljs.pprint :refer [pprint] :refer-macros [pp]]
             [goog.array]
             [goog.dom])
-  (:require-macros [ewen.inccup.incremental.core-test
-                    :refer [multi-defn]]))
-
-#_(register-tagged-literal! h)
+  (:require-macros [ewen.inccup.compiler-test :refer [multi-defn]]))
 
 (set-print-fn! #(.log js/console %))
 
@@ -31,6 +28,17 @@
 (multi-defn simple3 [x] (h [:div#ii.cc x]))
 (multi-defn simple4 [] (h [:div "<content"]))
 (multi-defn simple5 [x] (h [x "content"]))
+
+(comment
+  (let [comp-fn simple1
+        comp-fn-string simple1-string
+        comp (render! (new-root) comp-fn "e")]
+    (.-innerHTML (root))
+    (str (comp-fn-string "e"))
+    #_(update! comp comp-fn "f")
+    #_(.-innerHTML (root))
+    (str (comp-fn-string "f")))
+  )
 
 #_(deftest test-simple1
   (testing "test-simple1"
@@ -75,8 +83,8 @@
              (str (comp-fn-string {:id "i"})))))))
 
 (comment
-  (let [comp-fn simple-comp4
-        comp-fn-string simple-comp4-string
+  (let [comp-fn simple4
+        comp-fn-string simple4-string
         comp (render! (new-root) comp-fn)]
     (.-innerHTML (root))
     #_(str (comp-fn-string))

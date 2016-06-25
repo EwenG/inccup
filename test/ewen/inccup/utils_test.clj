@@ -1,4 +1,4 @@
-(ns ewen.inccup.common.utils-test
+(ns ewen.inccup.utils-test
   (:require [clojure.test :refer [is]]
             [cljs.analyzer.api :as ana-api]
             [cljs.compiler.api :as comp-api]
@@ -12,19 +12,18 @@
     value))
 
 (defn compile-cljs [cljs-form]
-  (binding [cljs.analyzer/*cljs-ns* 'ewen.inccup.common.gen-client]
-    (comp-api/emit
-     (ana-api/no-warn
-      (ana-api/analyze
-       (assoc (ana-api/empty-env) :context :expr)
-       cljs-form
-       {:optimizations :simple})))))
+  (comp-api/emit
+   (ana-api/no-warn
+    (ana-api/analyze
+     (assoc (ana-api/empty-env) :context :expr)
+     cljs-form
+     {:optimizations :simple}))))
 
 (def aliases {"vdom" "ewen.inccup.incremental.vdom"
               "comp" "ewen.inccup.compiler"
-              "comp-test" "ewen.inccup.incremental.core-test"
-              "gen-client" "ewen.inccup.common.gen-client"
-              "utils" "ewen.inccup.common.utils-test"
+              "comp-test" "ewen.inccup.compiler-test"
+              "gen-client" "ewen.inccup.gen-client"
+              "utils" "ewen.inccup.utils-test"
               "c" "cljs.core"})
 
 (backtick/defquote cljs-test-quote

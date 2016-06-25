@@ -1,7 +1,7 @@
-(ns ewen.inccup.common.gen-client
+(ns ewen.inccup.gen-client
   (:require [goog.dom]
             [goog.object]
-            [ewen.inccup.common.utils-test]
+            [ewen.inccup.utils-test]
             [ewen.inccup.compiler :as comp :refer-macros [h]]
             [ewen.inccup.incremental.vdom :as vdom]))
 

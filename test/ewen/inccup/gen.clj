@@ -1,5 +1,5 @@
-(ns ewen.inccup.common.gen
-  (:require [ewen.inccup.common.utils-test :as utils]
+(ns ewen.inccup.gen
+  (:require [ewen.inccup.utils-test :as utils]
             [ewen.inccup.compiler :as comp :refer [h]]
             [ewen.inccup.common.spec]
             [clojure.spec :as spec]
@@ -314,7 +314,7 @@
     ewen.replique.server-cljs/repl-env
     (utils/cljs-test-quote
      (~'ns ~'cljs.user
-      (:require [ewen.inccup.common.gen-client]))))
+      (:require [ewen.inccup.gen-client]))))
 
   (require '[ewen.replique.server-cljs :refer [repl-env]])
 

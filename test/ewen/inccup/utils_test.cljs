@@ -1,4 +1,4 @@
-(ns ewen.inccup.common.utils-test
+(ns ewen.inccup.utils-test
   (:require [goog.dom]
             [ewen.inccup.common.util :as util])
   (:import [goog.dom TagIterator]
