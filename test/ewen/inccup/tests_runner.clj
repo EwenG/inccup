@@ -3,6 +3,7 @@
             [cljs.build.api]
             [cljs.repl.browser]
             [ewen.inccup.gen]
+            [ewen.inccup.gen-reconciliation]
             [ewen.inccup.compiler-test]))
 
 (defn init-browser-repl [repl-init-fn & args]
@@ -32,6 +33,11 @@
 (defn run-gen-tests [test-nb-runs]
   (let [test-nb-runs (Integer/parseInt test-nb-runs)]
     (init-browser-repl ewen.inccup.gen/run-cljs-tests test-nb-runs)))
+
+(defn run-gen-reconciliation-tests [test-nb-runs]
+  (let [test-nb-runs (Integer/parseInt test-nb-runs)]
+    (init-browser-repl ewen.inccup.gen-reconciliation/run-cljs-tests
+                       test-nb-runs)))
 
 (defn run-compiler-tests []
   (init-browser-repl ewen.inccup.compiler-test/test-compiler))

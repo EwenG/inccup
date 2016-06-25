@@ -20,25 +20,20 @@
          (set-output-mode! :incremental)
          ~@body))))
 
-(defmacro with-eval [repl-env & body]
-  `(utils/eval-js
-    ~repl-env
-    (utils/compile-cljs ~@body)))
-
 (defn run-cljs-test
   [repl-env comp-fn init-params & rest-params]
-  (with-eval
+  (utils/with-eval
     repl-env
     (utils/cljs-test-quote
      (set! comp-test/*comp*
            (vdom/render! (utils/new-root) ~comp-fn ~@init-params))))
-  (let [string-template (with-eval
+  (let [string-template (utils/with-eval
                           repl-env
                           (utils/cljs-test-quote
                            (binding [comp-test/*cljs-output-mode* :string]
                              (comp-test/set-output-mode! :string)
                              (str (~comp-fn ~@init-params)))))
-        string-inc (with-eval
+        string-inc (utils/with-eval
                      repl-env
                      (utils/cljs-test-quote
                       (do
@@ -47,17 +42,17 @@
     (is (= (xml/parse (java.io.StringReader. string-template))
            (xml/parse (java.io.StringReader. string-inc)))))
   (doseq [params rest-params]
-    (with-eval
+    (utils/with-eval
       repl-env
       (utils/cljs-test-quote
        (vdom/update! comp-test/*comp* ~comp-fn ~@params)))
-    (let [string-template (with-eval
+    (let [string-template (utils/with-eval
                             repl-env
                             (utils/cljs-test-quote
                              (binding [comp-test/*cljs-output-mode* :string]
                                (comp-test/set-output-mode! :string)
                                (str (~comp-fn ~@params)))))
-          string-inc (with-eval
+          string-inc (utils/with-eval
                        repl-env
                        (utils/cljs-test-quote
                         (do
@@ -100,7 +95,7 @@
                  [(utils/cljs-test-quote (list 1 3))
                   (utils/cljs-test-quote (comp/h [:div]))]
                  [(utils/cljs-test-quote (list 4)) {:class "c"}]
-                 [(utils/cljs-test-quote (list 4)) {:class "e"}]))
+                 #_[(utils/cljs-test-quote (list 4)) {:class "e"}]))
 
 (defn test-compiler [repl-env]
   (binding [*repl-env* repl-env]
@@ -115,4 +110,5 @@
   (simple3)
   (simple4)
   (simple5)
+  (list1)
   )

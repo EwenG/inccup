@@ -1,7 +1,7 @@
 (ns ewen.inccup.gen-client
   (:require [goog.dom]
             [goog.object]
-            [ewen.inccup.utils-test]
+            [ewen.inccup.utils-test :as utils]
             [ewen.inccup.compiler :as comp :refer-macros [h]]
             [ewen.inccup.incremental.vdom :as vdom]))
 
@@ -11,25 +11,36 @@
 (def component-fn nil)
 (def component nil)
 
+
+
+;Children reconciliation
+
+(def ^:dynamic *output-mode* :incremental)
+(def ^:dynamic *key-counter* (atom 0))
+
+(defn make-component []
+  (if (= :string *output-mode*)
+    (h [:p] {::comp/output-mode :string})
+    (h [:p])))
+
+(defn make-component-with-key []
+  (if (= :string *output-mode*)
+    (h [:p] {::comp/output-mode :string})
+    (comp/with-opts! {:key (swap! *key-counter* inc)}
+      (h [:p]))))
+
+(defn reconcialiation-comp [x]
+  (if (= :string *output-mode*)
+    (h [:div {} x] {::comp/output-mode :string})
+    (h [:div {} x])))
+
 (comment
-  (def comp1 (fn [VPRuP]
-               (h [:output {:s- "G"} [:tfoot {} [VPRuP {}]]])))
-  (def comp1-s (fn [VPRuP]
-                 (h [:output {:s- "G"} [:tfoot {} [VPRuP {}]]]
-                    {::comp/output-mode :string})))
+  (let [comp (vdom/render! (utils/new-root) reconcialiation-comp (clojure.core/list))]
+    (reset! *key-counter* 0)
+    (vdom/update! comp reconcialiation-comp (clojure.core/list "" "" (ewen.inccup.gen-client/make-component-with-key) (ewen.inccup.gen-client/make-component-with-key)))
+    (reset! *key-counter* 0)
+    (vdom/update! comp reconcialiation-comp (clojure.core/list (ewen.inccup.gen-client/make-component) ""))
 
-  (goog.object/set (new-root-string) "innerHTML" (comp1-s :hb))
-  (vdom/render! (new-root-comp) comp1 :hb)
-
-  (def comp2 (fn [sMnsJXGuK]
-               (h [sMnsJXGuK {:Y ""} [sMnsJXGuK {:p "P"}]])))
-  (def comp2-s (fn [sMnsJXGuK]
-                 (h [sMnsJXGuK {:Y ""} [sMnsJXGuK {:p "P"}]]
-                    {::comp/output-mode :string})))
-
-  (goog.object/set (new-root-string) "innerHTML" (comp2-s :A))
-  (vdom/render! (new-root-comp) comp2 :A)
-
-  (roots-equal?)
+    )
 
   )

@@ -363,7 +363,7 @@
 
 (defn inc-or-dec-vnode [vnode index key vnodes inc-or-dec]
   (vreset! vnode (->> (vswap! index inc-or-dec) (aget vnodes)))
-  (vreset! key (oget @vnode "inccup/key")))
+  (vreset! key (when @vnode (oget @vnode "inccup/key"))))
 
 (defn diff-vseq-with-keys
   [prev-vseq prev-vnodes prev-length vseq vnodes length
@@ -377,9 +377,11 @@
         prev-end-vnode (volatile! (aget prev-vnodes @prev-end-index))
         new-end-vnode (volatile! (aget vnodes @new-end-index))
         prev-start-key (volatile! (oget @prev-start-vnode "inccup/key"))
-        new-start-key (volatile! (oget @new-start-vnode "inccup/key"))
+        new-start-key (volatile! (when @new-start-vnode
+                                   (oget @new-start-vnode "inccup/key")))
         prev-end-key (volatile! (oget @prev-end-vnode "inccup/key"))
-        new-end-key (volatile! (oget @new-end-vnode "inccup/key"))
+        new-end-key (volatile! (when @new-end-vnode
+                                 (oget @new-end-vnode "inccup/key")))
         parent (oget prev-vseq "inccup/parent-node")]
     (while (and (<= @prev-start-index @prev-end-index)
                 (<= @new-start-index @new-end-index))
@@ -415,7 +417,9 @@
                                 prev-end-key prev-vnodes dec)
               (inc-or-dec-vnode new-end-vnode new-end-index
                                 new-end-key vnodes dec))
-            (= @prev-start-key @new-end-key)
+            (and
+             (not (nil? @prev-start-key)) (not (nil? @new-end-key))
+             (= @prev-start-key @new-end-key))
             (do
               (update-vnode @prev-start-vnode @new-end-vnode
                             keymap removed-keys)
@@ -428,7 +432,9 @@
                                 prev-start-key prev-vnodes inc)
               (inc-or-dec-vnode new-end-vnode new-end-index
                                 new-end-key vnodes dec))
-            (= @prev-end-key @new-start-key)
+            (and
+             (not (nil? @prev-end-key)) (not (nil? @new-start-key))
+             (= @prev-end-key @new-start-key))
             (do
               (update-vnode @prev-end-vnode @new-start-vnode
                             keymap removed-keys)
@@ -629,9 +635,10 @@
                 (when (< min-length prev-length)
                   (pop-vseq-from-to prev-vseq min-length nil removed-keys))
                 (when (< min-length length)
-                  (let [ref-node (-> (aget prev-vnodes (dec min-length))
-                                     (oget "inccup/node")
-                                     (.-nextSibling))
+                  (let [ref-node (when (> min-length 0)
+                                     (-> (aget prev-vnodes (dec min-length))
+                                         (oget "inccup/node")
+                                         (.-nextSibling)))
                         parent (oget prev-vseq "inccup/parent-node")]
                     (loop [i min-length]
                       (when (< i length)
@@ -655,14 +662,16 @@
             (oset vseq "inccup/parent-node" parent)
             (replace-element vseq prev-forms index nil removed-keys))))
       (instance? TextVnode prev-element)
-      (when (not= (.-text prev-element) (str element))
-        (set! (.-text prev-element) (str element))
-        (oset (oget prev-element "inccup/node")
-              "nodeValue" (str element)))
+      (let [text (if (instance? TextVnode element)
+                   (.-text element) (str element))]
+        (when (not= (.-text prev-element) text)
+          (set! (.-text prev-element) text)
+          (oset (oget prev-element "inccup/node") "nodeValue" text)))
       :else
-      ;; element is a string or nil, prev-element is of different type
-      (let [new-node (.createTextNode js/document (str element))
-            text-vnode (->TextVnode (str element))]
+      ;; element is a text vnode, prev-element is of different type
+      (let [text-vnode (if (instance? TextVnode element)
+                         element (->TextVnode (str element)))
+            new-node (.createTextNode js/document (.-text text-vnode))]
         (oset text-vnode "inccup/node" new-node)
         (replace-element text-vnode prev-forms index
                          new-node removed-keys)))))

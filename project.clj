@@ -10,9 +10,13 @@
   :profiles {:dev {:dependencies [[org.clojure/test.check "0.9.0"]
                                   [backtick "0.3.3"]
                                   [org.clojure/data.xml "0.0.8"]]}}
-  :gen-tests-runs-nb 10
+  :gen-tests-runs-nb 30
   :aliases {"gen-tests" ["run" "-m"
                          "ewen.inccup.tests-runner/run-gen-tests"
                          :project/gen-tests-runs-nb]
+            "gen-reconciliation-tests"
+            ["run" "-m"
+             "ewen.inccup.tests-runner/run-gen-reconciliation-tests"
+             :project/gen-tests-runs-nb]
             "compiler-tests"
             ["run" "-m" "ewen.inccup.tests-runner/run-compiler-tests"]})

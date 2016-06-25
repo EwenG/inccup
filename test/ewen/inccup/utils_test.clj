@@ -19,6 +19,11 @@
      cljs-form
      {:optimizations :simple}))))
 
+(defmacro with-eval [repl-env & body]
+  `(eval-js
+    ~repl-env
+    (compile-cljs ~@body)))
+
 (def aliases {"vdom" "ewen.inccup.incremental.vdom"
               "comp" "ewen.inccup.compiler"
               "comp-test" "ewen.inccup.compiler-test"

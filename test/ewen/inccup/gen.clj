@@ -292,12 +292,6 @@
 
      true)))
 
-(defn send-print [repl-env]
-  (with-eval
-    repl-env
-    (utils/cljs-test-quote
-     (~'.log ~'js/console "e"))))
-
 (defn run-cljs-tests [repl-env test-nb-runs]
   (tc/quick-check
    test-nb-runs (gen/no-shrink
@@ -318,7 +312,5 @@
 
   (require '[ewen.replique.server-cljs :refer [repl-env]])
 
-  (tc/quick-check
-   20 (gen/no-shrink
-                 (make-valid-form-prop repl-env)))
+  (tc/quick-check 30 (gen/no-shrink (make-valid-form-prop repl-env)))
   )

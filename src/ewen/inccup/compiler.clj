@@ -90,19 +90,6 @@
      (compile-dispatch-cljs &env forms opts)
      (compile-dispatch-clj forms opts))))
 
-(defn tagged-literal->h [form]
-  `(h ~form))
-
-(defmacro register-tagged-literal! [sym]
-  (alter-var-root #'*cljs-data-readers* assoc sym tagged-literal->h)
-  (alter-var-root #'*data-readers* assoc sym tagged-literal->h)
-  (set! *data-readers* (assoc *data-readers* sym tagged-literal->h))
-  `'~sym)
-
-(comment
-  (register-tagged-literal! h)
-  )
-
 #_(defmacro html
   [& options-content]
   (let [[{:keys [mode output-format]} content] (options-with-content
