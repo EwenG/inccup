@@ -1,26 +1,15 @@
 (ns ewen.inccup.compiler-test
   (:require [cljs.test :refer-macros [deftest testing is run-tests]]
-            [ewen.inccup.compiler
-             :refer-macros [with-opts! register-tagged-literal! h]
-             :as comp]
+            [ewen.inccup.compiler :refer-macros [with-opts! h] :as comp]
             [ewen.inccup.incremental.vdom :as vdom
              :refer [Component render! update!]]
-            [ewen.inccup.utils-test
-             :refer [node-to-string root new-root]]
-            [cljs.pprint :refer [pprint] :refer-macros [pp]]
-            [goog.array]
+            [ewen.inccup.utils-test :refer [node-to-string root new-root]]
             [goog.dom])
   (:require-macros [ewen.inccup.compiler-test :refer [multi-defn]]))
 
 (set-print-fn! #(.log js/console %))
 
-(defn ff [] (h [:tbody {:e "e"} [:p [:tbody "e"]]]))
-
-(comment
-  (def cc (render! (new-root) ff))
-  (node-to-string (root))
-  )
-
+(def ^:dynamic *cljs-output-mode* :incremental)
 (def ^:dynamic *comp* nil)
 
 (multi-defn simple1 [x] (h [:div#ii.cc {} x 4]))
@@ -30,57 +19,14 @@
 (multi-defn simple5 [x] (h [x "content"]))
 
 (comment
-  (let [comp-fn simple1
-        comp-fn-string simple1-string
-        comp (render! (new-root) comp-fn "e")]
+  (let [comp (render! (new-root) simple1 "e")]
     (.-innerHTML (root))
-    (str (comp-fn-string "e"))
-    #_(update! comp comp-fn "f")
+    (binding [*cljs-output-mode* :string]
+      (str (simple1 "e")))
+    #_(update! comp simple1 "f")
     #_(.-innerHTML (root))
-    (str (comp-fn-string "f")))
+    #_(str (simple1 "f")))
   )
-
-#_(deftest test-simple1
-  (testing "test-simple1"
-    (let [comp-fn simple-comp1
-          comp-fn-string simple-comp1-string
-          comp (render! (new-root) comp-fn "e")]
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string "e"))))
-      (update! comp comp-fn "f")
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string "f"))))
-      (update! comp comp-fn "g")
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string "g")))))))
-
-#_(deftest test-simple2
-  (testing "test-simple2"
-    (let [comp-fn simple-comp2
-          comp-fn-string simple-comp2-string
-          comp (render! (new-root) comp-fn :p {:e "e"} "t")]
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string :p {:e "e"} "t"))))
-      (update! comp comp-fn :p {:class "c2"} "t")
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string :p {:class "c2"} "t"))))
-      (update! comp comp-fn :p {:class "c2" :e "e"} "t")
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string :p {:class "c2" :e "e"} "t")))))))
-
-#_(deftest test-simple3
-  (testing "test-simple3"
-    (let [comp-fn simple-comp3
-          comp-fn-string simple-comp3-string
-          comp (render! (new-root) comp-fn "e")]
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string "e"))))
-      (update! comp comp-fn "f")
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string "f"))))
-      (update! comp comp-fn {:id "i"})
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string {:id "i"})))))))
 
 (comment
   (let [comp-fn simple4
@@ -96,25 +42,6 @@
   (node-to-string (root))
   )
 
-#_(deftest test-simple5
-  (testing "test-simple5"
-    (let [comp-fn simple-comp5
-          comp-fn-string simple-comp5-string
-          comp (render! (new-root) comp-fn :p)]
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string :p))))
-      (update! comp comp-fn :div)
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string :div))))
-      (update! comp comp-fn :p)
-      (is (= (.-innerHTML (root))
-             (str (comp-fn-string :p))))
-      (update! comp comp-fn :input)
-      #_(is (= (.-innerHTML (root))
-               (str (comp-fn-string :input))))
-      (.-innerHTML (root))
-      (str (comp-fn-string :input)))))
-
 (comment
 
   (def cc (render! (new-root) def5 :p))
@@ -123,15 +50,21 @@
   (update! cc def5 :input)
   )
 
-(defn template1 [x] (h [:p#ii.cc {:e x :class x} x "4"]))
-(defn template2 [x z] (h [:p {} (count x) (h [:p z])
-                          (for [y x] (template1 y))]))
+(multi-defn list1* [x] (h [:p#ii.cc {:e x :class x} x "4"]))
+(multi-defn list1 [x z] (h [:p {} (count x) (h [:p z])
+                            (for [y x] (list1* y))]))
 
 (comment
-  (def cc (render! (new-root) template2 (list 1 2) nil))
-  (update! cc template2 (list 1 3) (h [:div]))
-  (update! cc template2 (list 4) {:class "c"})
-  (update! cc template2 (list 4) {:class "e"})
+  (def cc (render! (new-root) list1 (list 1 2) nil))
+  (update! cc list1 (list 1 3) (h [:div]))
+  (update! cc list1 (list 4) {:class "c"})
+  (update! cc list1 (list 4) {:class "e"})
+
+  (binding [*cljs-output-mode* :string]
+    (str (list1-string (list 1 2) nil)))
+
+  (binding [*cljs-output-mode* :string]
+    (str (list1-string (list 1 3) (h [:div]))))
   )
 
 (defn template3 [x] (h [:p {:class x} nil x]))
