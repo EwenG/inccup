@@ -233,8 +233,21 @@
           (.pop vnodes))
         (recur (dec index))))))
 
-(defn replace-element
-  [element prev-forms index new-node removed-keys]
+(defn get-ref-node [prev-element]
+  (cond (instance? Component prev-element)
+        (or (goog.object/get
+             prev-element "inccup/placeholder")
+            (goog.object/get
+             prev-element "inccup/node"))
+        (instance? SeqVnode prev-element)
+        (-> (.-vnodes prev-element)
+            (aget 0)
+            (oget "inccup/node"))
+        :else
+        (oget prev-element "inccup/node")))
+
+(defn remove-prev-element
+  [element prev-forms index removed-keys]
   (let [prev-element (aget prev-forms index)]
     (cond (instance? Component prev-element)
           (let [prev-node (or (goog.object/get
@@ -242,20 +255,11 @@
                               (goog.object/get
                                prev-element "inccup/node"))]
             (remove-comp prev-element removed-keys)
-            (if new-node
-              (goog.dom/replaceNode new-node prev-node)
-              (goog.dom/removeNode prev-node)))
+            (goog.dom/removeNode prev-node))
           (instance? SeqVnode prev-element)
-          (let [parent-node (oget prev-element "inccup/parent-node")]
-            (when new-node
-              (.insertBefore parent-node new-node
-                             (.-firstChild parent-node)))
-            (pop-vseq-from-to prev-element 0 nil removed-keys))
+          (pop-vseq-from-to prev-element 0 nil removed-keys)
           :else
-          (if new-node
-            (goog.dom/replaceNode
-             new-node (oget prev-element "inccup/node"))
-            (goog.dom/removeNode (oget prev-element "inccup/node"))))
+          (goog.dom/removeNode (oget prev-element "inccup/node")))
     (aset prev-forms index element)))
 
 (defn get-comp-with-key [key keymap removed-keys]
@@ -293,6 +297,13 @@
         (oset element "inccup/node" new-node)
         (.insertBefore parent new-node ref-node)))))
 
+(defn create-dynamic-text [parent element prev-forms index]
+  (let [new-node (.createTextNode js/document (str element))
+        text-vnode (->TextVnode (str element))]
+    (oset text-vnode "inccup/node" new-node)
+    (aset prev-forms index text-vnode)
+    (.appendChild parent new-node)))
+
 (defn create-dynamic
   [parent element prev-forms index keymap removed-keys]
   (cond
@@ -312,20 +323,20 @@
     (let [vseq (seq->vseq element)
           vnodes (.-vnodes vseq)
           length (.-length vnodes)]
-      (oset vseq "inccup/local-keymap" #js {})
-      (loop [i 0]
-        (when (< i length)
-          (create-dynamic-in-seq parent nil vseq vnodes i
-                                 keymap removed-keys)
-          (recur (inc i))))
-      (oset vseq "inccup/parent-node" parent)
-      (aset prev-forms index vseq))
-    :else
-    (let [new-node (.createTextNode js/document (str element))
-          text-vnode (->TextVnode (str element))]
-      (oset text-vnode "inccup/node" new-node)
-      (aset prev-forms index text-vnode)
-      (.appendChild parent new-node))))
+      (if (> length 0)
+        (do
+          (oset vseq "inccup/local-keymap" #js {})
+          (loop [i 0]
+            (when (< i length)
+              (create-dynamic-in-seq parent nil vseq vnodes i
+                                     keymap removed-keys)
+              (recur (inc i))))
+          (oset vseq "inccup/parent-node" parent)
+          (aset prev-forms index vseq))
+        ;; Empty seqs are considered as empty strings,
+        ;; otherwise they don't get any real node attached
+        (create-dynamic-text parent "" prev-forms index)))
+    :else (create-dynamic-text parent element prev-forms index)))
 
 (declare update-comp*)
 
@@ -366,11 +377,9 @@
         prev-end-vnode (volatile! (aget prev-vnodes @prev-end-index))
         new-end-vnode (volatile! (aget vnodes @new-end-index))
         prev-start-key (volatile! (oget @prev-start-vnode "inccup/key"))
-        new-start-key (volatile! (when @new-start-vnode
-                                   (oget @new-start-vnode "inccup/key")))
+        new-start-key (volatile! (oget @new-start-vnode "inccup/key"))
         prev-end-key (volatile! (oget @prev-end-vnode "inccup/key"))
-        new-end-key (volatile! (when @new-end-vnode
-                                 (oget @new-end-vnode "inccup/key")))
+        new-end-key (volatile! (oget @new-end-vnode "inccup/key"))
         parent (oget prev-vseq "inccup/parent-node")]
     (while (and (<= @prev-start-index @prev-end-index)
                 (<= @new-start-index @new-end-index))
@@ -491,8 +500,18 @@
           (pop-vseq-from-to prev-vseq @prev-start-index
                             (inc @prev-end-index) removed-keys))))
 
+(defn diff-dynamic-default
+  [element prev-element prev-forms index removed-keys]
+  (let [text-vnode (if (instance? TextVnode element)
+                     element (->TextVnode (str element)))
+        new-node (.createTextNode js/document (.-text text-vnode))
+        ref-node (get-ref-node prev-element)]
+    (oset text-vnode "inccup/node" new-node)
+    (goog.dom/insertSiblingBefore new-node ref-node)
+    (remove-prev-element text-vnode prev-forms index removed-keys)))
+
 (defn diff-children
-  [element prev-forms index keymap removed-keys in-seq?]
+  [element prev-forms index keymap removed-keys]
   (let [prev-element (aget prev-forms index)]
     (cond
       (instance? Component element)
@@ -501,25 +520,35 @@
                  (= key (oget prev-element "inccup/key")))
           (update-comp* prev-element element keymap removed-keys)
           (if-let [moved-comp (get-comp-with-key key keymap removed-keys)]
-            (let [new-node (oget moved-comp "inccup/node")]
-              (replace-element moved-comp prev-forms index
-                               new-node removed-keys)
-              (update-comp* moved-comp element keymap removed-keys))
-            (replace-element element prev-forms index
-                             (create-comp* element keymap removed-keys)
-                             removed-keys)))
+            (let [new-node (oget moved-comp "inccup/node")
+                  ref-node (get-ref-node prev-element)]
+              (goog.dom/insertSiblingBefore new-node ref-node)
+              (update-comp* moved-comp element keymap removed-keys)
+              (remove-prev-element moved-comp prev-forms
+                                   index removed-keys))
+            (let [new-node (create-comp* element keymap removed-keys)
+                  ref-node (get-ref-node prev-element)]
+              (goog.dom/insertSiblingBefore new-node ref-node)
+              (remove-prev-element element prev-forms
+                                   index removed-keys))))
         (if (and (instance? Component prev-element)
                  (= (.-id prev-element) (.-id element))
                  (not (oget prev-element "inccup/key")))
           (update-comp* prev-element element keymap removed-keys)
-          (replace-element element prev-forms index
-                           (create-comp* element keymap removed-keys)
-                           removed-keys)))
-      (and (not in-seq?) (seq? element))
+          (let [new-node (create-comp* element keymap removed-keys)
+                ref-node (get-ref-node prev-element)]
+            (goog.dom/insertSiblingBefore new-node ref-node)
+            (remove-prev-element element prev-forms
+                                 index removed-keys))))
+      (seq? element)
       (let [vseq (seq->vseq element)
             vnodes (.-vnodes vseq)
             length (.-length vnodes)]
-        (if (instance? SeqVnode prev-element)
+        (cond
+          (= 0 length)
+          (diff-dynamic-default "" prev-element prev-forms
+                                index removed-keys)
+          (instance? SeqVnode prev-element)
           (let [prev-vseq prev-element
                 prev-vnodes (.-vnodes prev-vseq)
                 prev-length (.-length prev-vnodes)
@@ -531,17 +560,16 @@
                   (when (< i min-length)
                     (let [element (aget vnodes i)]
                       (diff-children element prev-vnodes i
-                                     keymap removed-keys true)
+                                     keymap removed-keys)
                       (when-let [key (oget element "inccup/key")]
                         (oset local-keymap key i))
                       (recur (inc i)))))
                 (when (< min-length prev-length)
                   (pop-vseq-from-to prev-vseq min-length nil removed-keys))
                 (when (< min-length length)
-                  (let [ref-node (when (> min-length 0)
-                                     (-> (aget prev-vnodes (dec min-length))
-                                         (oget "inccup/node")
-                                         (.-nextSibling)))
+                  (let [ref-node (-> (aget prev-vnodes (dec min-length))
+                                     (oget "inccup/node")
+                                     (.-nextSibling))
                         parent (oget prev-vseq "inccup/parent-node")]
                     (loop [i min-length]
                       (when (< i length)
@@ -554,6 +582,7 @@
                                      vseq vnodes length local-keymap
                                      keymap removed-keys)
                 (aset prev-forms index vseq))))
+          :else
           (let [prev-node (oget prev-element "inccup/node")
                 parent (-> prev-node (.-parentNode))]
             (oset vseq "inccup/local-keymap" #js {})
@@ -563,7 +592,7 @@
                                        keymap removed-keys)
                 (recur (inc i))))
             (oset vseq "inccup/parent-node" parent)
-            (replace-element vseq prev-forms index nil removed-keys))))
+            (remove-prev-element vseq prev-forms index removed-keys))))
       (instance? TextVnode prev-element)
       (let [text (if (instance? TextVnode element)
                    (.-text element) (str element))]
@@ -572,12 +601,8 @@
           (oset (oget prev-element "inccup/node") "nodeValue" text)))
       :else
       ;; element is a text vnode, prev-element is of different type
-      (let [text-vnode (if (instance? TextVnode element)
-                         element (->TextVnode (str element)))
-            new-node (.createTextNode js/document (.-text text-vnode))]
-        (oset text-vnode "inccup/node" new-node)
-        (replace-element text-vnode prev-forms index
-                         new-node removed-keys)))))
+      (diff-dynamic-default element prev-element prev-forms
+                            index removed-keys))))
 
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
@@ -655,7 +680,7 @@
     ;; child if the params it depends on did change.
     (when (aget var-deps-arr static)
       (diff-children (forms-fn static) prev-forms static
-                     keymap removed-keys false))
+                     keymap removed-keys))
     :else
     (let [tag (first static)
           dynamic-tag? (number? tag)
