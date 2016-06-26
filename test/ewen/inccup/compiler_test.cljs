@@ -59,86 +59,55 @@
   (update! cc list1 (list 1 3) (h [:div]))
   (update! cc list1 (list 4) {:class "c"})
   (update! cc list1 (list 4) {:class "e"})
-
-  (binding [*cljs-output-mode* :string]
-    (str (list1-string (list 1 2) nil)))
-
-  (binding [*cljs-output-mode* :string]
-    (str (list1-string (list 1 3) (h [:div]))))
   )
 
-(defn template3 [x] (h [:p {:class x} nil x]))
-(defn template4 [x] (h [:p {}
-                        (for [y x]
-                          (with-opts! {:key y}
-                            (template3 (inc y))))]))
-(defn template44 [x z] (let [cc (h [:p])]
-                         (h [:div [:p {}
-                                   (list
-                                    (for [y x]
-                                      (if (and (= 2 y) z)
-                                        (with-opts! {:key "tt"} cc)
-                                        (with-opts! {:key y}
-                                          (template3 (inc y)))))
-                                    5)]
-                             (when (not z)
-                               (with-opts! {:key "tt"} cc))])))
+(defn keyed1* [x] (h [:p {:class x} nil x]))
+(defn keyed1 [x] (h [:p {}
+                     (for [y x]
+                       (with-opts! {:key y}
+                         (template3 (inc y))))]))
+#_(defn keyed2 [x z] (let [cc (h [:p])]
+                     (h [:div [:p {}
+                               (list
+                                (for [y x]
+                                  (if (and (= 2 y) z)
+                                    (with-opts! {:key "tt"} cc)
+                                    (with-opts! {:key y}
+                                      (template3 (inc y)))))
+                                5)]
+                         (when (not z)
+                           (with-opts! {:key "tt"} cc))])))
 
 (comment
-  (def cc (render! (new-root) template4 (list 1 2)))
-  (update! cc template4 (list 2 1))
-  (update! cc template4 (list 1 2))
-  #_(def cc (render! (new-root) template4 (list 1 2)))
-  (def cc (render! (new-root) template4 (list 2 3 0)))
-  (update! cc template4 (list 0 1))
-  #_(update! cc template4 (list 3 0 1))
-  (update! cc template4 (list 2 3 0))
-  (update! cc template4 (list 3 0 1))
+  (def cc (render! (new-root) keyed1 (list 1 2)))
+  (update! cc keyed1 (list 2 1))
+  (update! cc keyed1 (list 1 2))
+  (def cc (render! (new-root) keyed1 (list 2 3 0)))
+  (update! cc keyed1 (list 0 1))
+  #_(update! cc keyed1 (list 3 0 1))
+  (update! cc keyed1 (list 2 3 0))
+  (update! cc keyed1 (list 3 0 1))
   (def ll (atom (cycle (range 20))))
   (let [n (take 19 @ll)]
-    (update! cc template4 n)
+    (update! cc keyed1 n)
     (do (swap! ll #(drop 19 %)) nil))
 
-  (def cc (render! (new-root) template44 (list 1 2 3) true))
-  (update! cc template44 (list 1 3 2) true)
-  (update! cc template44 (list 1 3 2) false)
-  (update! cc template44 (list 1 2 3) true)
+  #_(def cc (render! (new-root) template44 (list 1 2 3) true))
+  #_(update! cc template44 (list 1 3 2) true)
+  #_(update! cc template44 (list 1 3 2) false)
+  #_(update! cc template44 (list 1 2 3) true)
   )
 
-(defn template5 [x y] (h [:p {}
-                          (let [cc (h [:div "else"])]
-                            (if y
-                              (h [:div (with-opts! {:key 1} cc)])
-                              (with-opts! {:key 1} cc)))]))
+(defn keyed3 [x y] (h [:p {}
+                       (let [cc (h [:div "else"])]
+                         (if y
+                           (h [:div (with-opts! {:key 1} cc)])
+                           (with-opts! {:key 1} cc)))]))
 
 (comment
-  (def cc (render! (new-root) template5 3 false))
-  (update! cc template5 3 false)
-  (update! cc template5 3 true)
-  )
-
-#_(deftest keyedChildren
-  (testing "keyed children"
-    (let [comp (template4 (list 1 2))]
-      (create-comp comp)
-      (.log js/console @(update-comp (template4 (list 2 1)) comp)))))
-
-
-(comment
-  (run-tests 'ewen.inccup.incremental.core-test)
-
-  )
-
-
-
-(defn large [a b] (h [:div {} "e" [:p {} "e" 3] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3]]] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3] [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} a 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" 3 [:p {} "e" b]]]]]]]]]]]]]]]]]] [:p {} "e" 3]]))
-
-
-
-(comment
-  (def cc (render! (new-root) large (h [:div 1 2 3]) 3))
-  (update! cc large (large (large 3 (large 5 6)) 2) (large 3 4))
-
+  (def cc (render! (new-root) keyed3 3 false))
+  (update! cc keyed3 3 false)
+  (update! cc keyed3 3 true)
   )
 
 
