@@ -45,7 +45,7 @@
     (utils/with-eval
       repl-env
       (utils/cljs-test-quote
-       (vdom/update! comp-test/*comp* ~comp-fn ~@params)))
+       (vdom/update! comp-test/*comp* ~@params)))
     (let [string-template (utils/with-eval
                             repl-env
                             (utils/cljs-test-quote
@@ -95,7 +95,7 @@
                  [(utils/cljs-test-quote (list 1 3))
                   (utils/cljs-test-quote (comp/h [:div]))]
                  [(utils/cljs-test-quote (list 4)) {:class "c"}]
-                 #_[(utils/cljs-test-quote (list 4)) {:class "e"}]))
+                 [(utils/cljs-test-quote (list 4)) {:class "e"}]))
 
 (defn test-compiler [repl-env]
   (binding [*repl-env* repl-env]

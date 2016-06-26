@@ -88,9 +88,6 @@
         (recur current (inc index)))))
   )
 
-(defn inccup-seq? [x]
-  (and (array? x) (oget x "inccup/seq")))
-
 (defn attrs->js [attrs]
   (let [attrs-js (js-obj)
         attr-keys (keys attrs)]
@@ -191,7 +188,7 @@
                           (do
                             (f x (oget x "inccup/key") removed-keys)
                             (oget x "inccup/forms"))
-                          (inccup-seq? x) x
+                          (instance? SeqVnode x) (.-vnodes x)
                           :else nil)]
     (when forms-array
       (let [length (.-length forms-array)]
@@ -260,14 +257,6 @@
              new-node (oget prev-element "inccup/node"))
             (goog.dom/removeNode (oget prev-element "inccup/node"))))
     (aset prev-forms index element)))
-
-(defn parent-node [node]
-  (if (array? node)
-    (recur (aget node 0))
-    (.-parentNode node)))
-
-(defn inccup-seq []
-  (doto #js [] (oset "inccup/seq" true)))
 
 (defn get-comp-with-key [key keymap removed-keys]
   (let [removed-comp? (oget removed-keys key)
@@ -501,92 +490,6 @@
           (> @new-start-index @new-end-index)
           (pop-vseq-from-to prev-vseq @prev-start-index
                             (inc @prev-end-index) removed-keys))))
-
-;; Taken from
-;; https://github.com/paldepind/snabbdom/blob/master/snabbdom.js# L133
-#_(defn diff-vseq-with-keys
-  [prev-forms new-forms dynamic-nodes key->index keymap removed-keys]
-  (let [prev-start-index (volatile! 0)
-        new-start-index (volatile! 0)
-        prev-end-index (volatile! (dec (.-length prev-forms)))
-        new-end-index (volatile! (dec (.-length new-forms)))
-        prev-start-form (volatile! (aget prev-forms 0))
-        new-start-form (volatile! (aget new-forms 0))
-        prev-end-form (volatile! (aget prev-forms @prev-end-index))
-        new-end-form (volatile! (aget new-forms @new-end-index))]
-    (while (and (<= @prev-start-index @prev-end-index)
-                (<= @new-start-index @new-end-index))
-      (cond (nil? @prev-start-form)
-            (vreset! prev-start-form (->> (vswap! prev-start-index inc)
-                                          (aget prev-forms)))
-            (nil? @prev-end-form)
-            (vreset! prev-end-form (->> (vswap! prev-end-index dec)
-                                        (aget prev-forms)))
-            (compatible-vnodes? @prev-start-form @new-start-form)
-            (do
-              (aset new-forms @new-start-index @prev-start-form)
-              (update-vnode @prev-start-form @new-start-form
-                            keymap removed-keys)
-              (vreset! prev-start-form (->> (vswap! prev-start-index inc)
-                                            (aget prev-forms)))
-              (vreset! new-start-form (->> (vswap! new-start-index inc)
-                                           (aget new-forms))))
-            (compatible-vnodes? @prev-end-form @new-end-form)
-            (do
-              (aset new-forms @new-end-index @prev-end-form)
-              (update-vnode @prev-end-form @new-end-form
-                            keymap removed-keys)
-              (vreset! prev-end-form (->> (vswap! prev-end-index dec)
-                                          (aget prev-forms)))
-              (vreset! new-end-form (->> (vswap! new-end-index dec)
-                                         (aget new-forms))))
-            (same-keys? @prev-start-form @new-end-form)
-            (do
-              (aset new-forms @new-end-index @prev-start-form)
-              (update-vnode @prev-start-form @new-end-form
-                            keymap removed-keys)
-              (goog.dom/insertSiblingBefore
-               (aget dynamic-nodes @prev-start-index)
-               (.-nextSibling (aget dynamic-nodes @prev-end-index)))
-              (vreset! prev-start-form (->> (vswap! prev-start-index inc)
-                                            (aget prev-forms)))
-              (vreset! new-end-form (->> (vswap! new-end-index dec)
-                                         (aget new-forms))))
-            (same-keys? @prev-end-form @new-start-form)
-            (do
-              (aset new-forms @new-start-index @prev-end-form)
-              (update-vnode @prev-end-form @new-start-form
-                            keymap removed-keys)
-              (goog.dom/insertSiblingBefore
-               (aget dynamic-nodes @prev-end-index)
-               (aget dynamic-nodes @prev-start-index))
-              (vreset! prev-end-form (->> (vswap! prev-end-index dec)
-                                          (aget prev-forms)))
-              (vreset! new-start-form (->> (vswap! new-start-index inc)
-                                           (aget new-forms))))
-            :else
-            (let [key (oget @new-start-form "inccup/key")]
-              (if-let [moved-comp-index (and key (oget key->index key))]
-                (let [moved-comp (aget prev-forms moved-comp-index)]
-                  (aset new-forms @new-start-index moved-comp)
-                  (update-comp* moved-comp @new-start-form
-                                keymap removed-keys)
-                  (aset new-forms @new-start-index moved-comp)
-                  (aset prev-forms moved-comp-index nil)
-                  (goog.dom/insertSiblingBefore
-                   (oget moved-comp "inccup/node")
-                   (aget dynamic-nodes @prev-start-index)))
-                (if-let [moved-comp (get-comp-with-key
-                                     key keymap removed-keys)]
-                  (do
-                    (aset new-forms @new-start-index moved-comp)
-                    (goog.dom/insertSiblingBefore
-                     (oget moved-comp "inccup/node")
-                     (aget dynamic-nodes @prev-start-index)))
-                  (goog.dom/insertSiblingBefore
-                   (create-comp* @new-start-form keymap removed-keys)
-                   (aget dynamic-nodes @prev-start-index))))
-              (vreset! new-start-form (vreset! new-start-index inc)))))))
 
 (defn diff-children
   [element prev-forms index keymap removed-keys in-seq?]
@@ -840,14 +743,17 @@
                     comp (goog.object/get *globals* "keymap") nil)]
       (oset comp "inccup/globals" *globals*)
       (oset comp "inccup/node" new-node)
+      (oset comp "inccup/comp-fn" comp-fn)
       (goog.dom/removeChildren node)
       (.appendChild node new-node)
       comp)))
 
-(defn update! [prev-comp comp-fn & params]
+(defn update! [prev-comp & params]
   (binding [*globals* (oget prev-comp "inccup/globals")]
     (assert (not (nil? *globals*)))
-    (let [comp (apply comp-fn params)
+    (let [comp-fn (oget prev-comp "inccup/comp-fn")
+          _ (assert (fn? comp-fn))
+          comp (apply comp-fn params)
           keymap (goog.object/get *globals* "keymap")
           removed-keys #js {}]
       (assert (= (.-id comp) (.-id prev-comp)))

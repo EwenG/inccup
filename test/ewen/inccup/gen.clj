@@ -273,7 +273,7 @@
          (with-eval
            repl-env
            (utils/cljs-test-quote
-            (vdom/update! gen-client/component gen-client/component-fn
+            (vdom/update! gen-client/component
                           ~@tag-vals
                           ~@attr-vals
                           ~@attr-keys-vals
@@ -303,12 +303,6 @@
   (gen/sample html-tag-gen)
   (gen/sample form-gen 10)
   (map :form (gen/sample form-gen))
-
-  (with-eval
-    ewen.replique.server-cljs/repl-env
-    (utils/cljs-test-quote
-     (~'ns ~'cljs.user
-      (:require [ewen.inccup.gen-client]))))
 
   (require '[ewen.replique.server-cljs :refer [repl-env]])
 

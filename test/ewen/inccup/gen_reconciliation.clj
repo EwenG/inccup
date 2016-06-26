@@ -50,7 +50,7 @@
       (utils/cljs-test-quote
        (set! gen-client/component
              (vdom/render! (utils/new-root)
-                           gen-client/reconcialiation-comp
+                           gen-client/reconciliation-comp
                            ~children-list))))
 
     ;; Check that the clojurescript generated string is equal to the
@@ -59,7 +59,7 @@
                             repl-env
                             (utils/cljs-test-quote
                              (binding [gen-client/*output-mode* :string]
-                               (str (gen-client/reconcialiation-comp
+                               (str (gen-client/reconciliation-comp
                                      ~children-list)))))
           string-inc (utils/with-eval
                        repl-env
@@ -81,9 +81,7 @@
    (utils/with-eval
      repl-env
      (utils/cljs-test-quote
-      (vdom/update! gen-client/component
-                    gen-client/reconcialiation-comp
-                    ~children-list)))
+      (vdom/update! gen-client/component ~children-list)))
 
    ;; Check that the clojurescript generated string is equal to the
    ;; updated component
@@ -91,18 +89,12 @@
                            repl-env
                            (utils/cljs-test-quote
                             (binding [gen-client/*output-mode* :string]
-                              (str (gen-client/reconcialiation-comp
+                              (str (gen-client/reconciliation-comp
                                     ~children-list)))))
          string-inc (utils/with-eval
                       repl-env
                       (utils/cljs-test-quote
                        (utils/node-to-string (utils/root))))]
-     #_(prn (utils/cljs-test-quote
-           (vdom/update! gen-client/component
-                         gen-client/reconcialiation-comp
-                         ~children-list)))
-     #_(prn string-template)
-     #_(prn string-inc)
      (is (= (xml/parse (java.io.StringReader. string-template))
             (xml/parse (java.io.StringReader. string-inc)))))
 
@@ -115,17 +107,8 @@
 (comment
   (require '[ewen.replique.server-cljs :refer [repl-env]])
 
-  (utils/with-eval
-    repl-env
-    (utils/cljs-test-quote
-     (set! gen-client/component
-           (vdom/render! (utils/new-root)
-                         gen-client/reconcialiation-comp
-                         :string (list "g" "r")))))
-
-  (tc/quick-check 100 (gen/no-shrink (test-prop repl-env)))
+  (tc/quick-check 60 (gen/no-shrink (test-prop repl-env)))
 
   (ewen.inccup.incremental.vdom/update!
-   ewen.inccup.gen-client/component
-   ewen.inccup.gen-client/reconcialiation-comp (clojure.core/list))
+   ewen.inccup.gen-client/component (clojure.core/list))
   )

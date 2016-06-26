@@ -23,7 +23,7 @@
     (.-innerHTML (root))
     (binding [*cljs-output-mode* :string]
       (str (simple1 "e")))
-    #_(update! comp simple1 "f")
+    (update! comp "f")
     #_(.-innerHTML (root))
     #_(str (simple1 "f")))
   )
@@ -34,7 +34,7 @@
         comp (render! (new-root) comp-fn)]
     (.-innerHTML (root))
     #_(str (comp-fn-string))
-    #_(update! comp comp-fn)
+    #_(update! comp)
     #_(str (comp-fn-string)))
   )
 
@@ -44,10 +44,10 @@
 
 (comment
 
-  (def cc (render! (new-root) def5 :p))
-  (update! cc def5 :div)
-  (update! cc def5 :p)
-  (update! cc def5 :input)
+  (def cc (render! (new-root) simple5 :p))
+  (update! cc :div)
+  (update! cc :p)
+  (update! cc :input)
   )
 
 (multi-defn list1* [x] (h [:p#ii.cc {:e x :class x} x "4"]))
@@ -56,16 +56,16 @@
 
 (comment
   (def cc (render! (new-root) list1 (list 1 2) nil))
-  (update! cc list1 (list 1 3) (h [:div]))
-  (update! cc list1 (list 4) {:class "c"})
-  (update! cc list1 (list 4) {:class "e"})
+  (update! cc (list 1 3) (h [:div]))
+  (update! cc (list 4) {:class "c"})
+  (update! cc (list 4) {:class "e"})
   )
 
 (defn keyed1* [x] (h [:p {:class x} nil x]))
 (defn keyed1 [x] (h [:p {}
                      (for [y x]
                        (with-opts! {:key y}
-                         (template3 (inc y))))]))
+                         (keyed1* (inc y))))]))
 #_(defn keyed2 [x z] (let [cc (h [:p])]
                      (h [:div [:p {}
                                (list
@@ -80,22 +80,22 @@
 
 (comment
   (def cc (render! (new-root) keyed1 (list 1 2)))
-  (update! cc keyed1 (list 2 1))
-  (update! cc keyed1 (list 1 2))
+  (update! cc (list 2 1))
+  (update! cc (list 1 2))
   (def cc (render! (new-root) keyed1 (list 2 3 0)))
-  (update! cc keyed1 (list 0 1))
-  #_(update! cc keyed1 (list 3 0 1))
-  (update! cc keyed1 (list 2 3 0))
-  (update! cc keyed1 (list 3 0 1))
+  (update! cc (list 0 1))
+  #_(update! cc (list 3 0 1))
+  (update! cc (list 2 3 0))
+  (update! cc (list 3 0 1))
   (def ll (atom (cycle (range 20))))
   (let [n (take 19 @ll)]
-    (update! cc keyed1 n)
+    (update! cc n)
     (do (swap! ll #(drop 19 %)) nil))
 
   #_(def cc (render! (new-root) template44 (list 1 2 3) true))
-  #_(update! cc template44 (list 1 3 2) true)
-  #_(update! cc template44 (list 1 3 2) false)
-  #_(update! cc template44 (list 1 2 3) true)
+  #_(update! cc (list 1 3 2) true)
+  #_(update! cc (list 1 3 2) false)
+  #_(update! cc (list 1 2 3) true)
   )
 
 (defn keyed3 [x y] (h [:p {}
@@ -106,8 +106,8 @@
 
 (comment
   (def cc (render! (new-root) keyed3 3 false))
-  (update! cc keyed3 3 false)
-  (update! cc keyed3 3 true)
+  (update! cc 3 false)
+  (update! cc 3 true)
   )
 
 
