@@ -116,7 +116,7 @@ from an element name."
 
 (defn element-compile-strategy
   "Returns the compilation strategy to use for a given element."
-  [[tag attrs & content :as element] path]
+  [[tag attrs & content :as element] path reverse-order?]
   (cond
     (every? literal? element)
     ::all-literal
@@ -143,83 +143,88 @@ from an element name."
 (defmulti compile-element element-compile-strategy)
 
 (defmethod compile-element ::all-literal
-  [element path]
+  [element path reverse-order?]
   (let [[tag attrs content] (normalize-element element)]
-    (into [(name tag) attrs] (compile-seq content path 2))))
+    (into [(name tag) attrs]
+          (compile-seq content path reverse-order? 2))))
 
 (defmethod compile-element ::literal-tag-and-literal-attributes
-  [[tag attrs & content] path]
+  [[tag attrs & content] path reverse-order?]
   (let [[tag attrs _] (normalize-element [tag attrs])]
-    (into [(name tag) attrs] (compile-seq content path 2))))
+    (into [(name tag) attrs]
+          (compile-seq content path reverse-order? 2))))
 
 (defmethod compile-element ::literal-tag-and-map-attributes
-  [[tag attrs & content] path]
+  [[tag attrs & content] path reverse-order?]
   (let [[tag attrs _] (normalize-element [tag attrs])]
     (into [(name tag) (compile-attr-map attrs (conj path 1))]
-          (compile-seq content path 2))))
+          (compile-seq content path reverse-order? 2))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
-  [[tag & content] path]
-  (compile-element (apply vector tag {} content) path))
+  [[tag & content] path reverse-order?]
+  (compile-element (apply vector tag {} content) path reverse-order?))
 
 (defmethod compile-element ::literal-tag
-  [[tag attrs & content :as element] path]
+  [[tag attrs & content :as element] path reverse-order?]
   (let [[tag tag-attrs [first-content & rest-content]]
         (normalize-element element)
         [attrs-dyn-leaf first-child-dyn-leaf]
         (maybe-attr-map first-content (conj path 1)
                         (conj path 2) tag-attrs)]
     (into [(name tag) attrs-dyn-leaf first-child-dyn-leaf]
-          (compile-seq rest-content path 3))))
+          (compile-seq rest-content path reverse-order? 3))))
 
 (defmethod compile-element ::literal-attributes
-  [[tag attrs & rest-content] path]
+  [[tag attrs & rest-content] path reverse-order?]
   (into [(dynamic-tag tag (conj path 0)) attrs]
-        (compile-seq rest-content path 2)))
+        (compile-seq rest-content path reverse-order? 2)))
 
 (defmethod compile-element ::map-attributes
-  [[tag attrs & rest-content] path]
+  [[tag attrs & rest-content] path reverse-order?]
   (into [(dynamic-tag tag (conj path 0))
          (compile-attr-map attrs (conj path 1))]
-        (compile-seq rest-content path 2)))
+        (compile-seq rest-content path reverse-order? 2)))
 
 (defmethod compile-element ::no-attributes
-  [[tag & content] path]
-  (compile-element (apply vector tag {} content) path))
+  [[tag & content] path reverse-order?]
+  (compile-element (apply vector tag {} content) path reverse-order?))
 
 (defmethod compile-element :default
-  [[tag attrs & rest-content :as element] path]
+  [[tag attrs & rest-content :as element] path reverse-order?]
   (if (= 1 (count element))
     [(dynamic-tag tag (conj path 0)) {}]
     (let [dyn-tag-leaf (dynamic-tag tag (conj path 0))
           [attrs-dyn-leaf first-child-dyn-leaf]
           (maybe-attr-map attrs (conj path 1) (conj path 2) {})]
       (into [dyn-tag-leaf attrs-dyn-leaf first-child-dyn-leaf]
-            (compile-seq rest-content path 3)))))
+            (compile-seq rest-content path reverse-order? 3)))))
 
 (declare compile-dispatch)
 
 (defn- compile-seq
   "Compile a sequence of data-structures into HTML."
-  ([content path]
-   (compile-seq content path 0))
-  ([content path index-init]
+  ([content path reverse-order?]
+   (compile-seq content path reverse-order? 0))
+  ([content path reverse-order? index-init]
    (loop [[expr & rest-content :as content] content
           index index-init
-          compiled []]
+          compiled (if reverse-order? '() [])]
      (if (not (empty? content))
-       (let [compiled-expr (compile-dispatch expr (conj path index))]
+       (let [compiled-expr (compile-dispatch expr (conj path index)
+                                             reverse-order?)]
          (recur rest-content (inc index) (conj compiled compiled-expr)))
        compiled))))
 
-(defn compile-dispatch [expr path]
-  (cond
-    (vector? expr) (compile-element expr path)
-    (string? expr) expr
-    (keyword? expr) expr
-    (literal? expr) expr
-    (seq? expr) (compile-dynamic-expr expr path)
-    :else (compile-dynamic-expr expr path)))
+(defn compile-dispatch
+  ([expr path] (compile-dispatch expr path false))
+  ([expr path reverse-order?]
+   (cond
+     (vector? expr) (compile-element expr path reverse-order?)
+     (string? expr) expr
+     (keyword? expr) expr
+     (literal? expr) expr
+     (seq? expr) (compile-dynamic-expr expr path)
+     :else (compile-dynamic-expr expr path))))
 
 #_(defn handle-void-tags [x]
   (if (vector? x)

@@ -29,9 +29,7 @@
   )
 
 (comment
-  (let [comp-fn simple4
-        comp-fn-string simple4-string
-        comp (render! (new-root) comp-fn)]
+  (let [comp (render! (new-root) simple4)]
     (.-innerHTML (root))
     #_(str (comp-fn-string))
     #_(update! comp)

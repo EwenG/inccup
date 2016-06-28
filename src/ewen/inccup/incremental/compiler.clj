@@ -44,22 +44,6 @@
   (into [] (map (partial dynamic-form-with-tracked-vars env tracked-vars))
         dynamic))
 
-#_(defn static-with-metas [static {:keys [path index]}]
-  (loop [static static
-         rest-path path
-         processed-path []]
-    (if-let [path-index (first rest-path)]
-      (if (empty? processed-path)
-        (recur (vary-meta static update-in
-                          [:update-paths] union #{index})
-               (rest rest-path)
-               (conj processed-path path-index))
-        (recur (update-in static processed-path vary-meta update-in
-                          [:update-paths] union #{index})
-               (rest rest-path)
-               (conj processed-path path-index)))
-      static)))
-
 (defn var-deps->indexes [params var-deps]
   (map #(.indexOf params %) var-deps))
 
@@ -81,7 +65,8 @@
                          tracked-vars))
         [static dynamic]
         (binding [c-comp/*dynamic-forms* []]
-          [(c-comp/compile-dispatch forms []) c-comp/*dynamic-forms*])
+          [(c-comp/compile-dispatch forms [] true)
+           c-comp/*dynamic-forms*])
         dynamic (dynamic-forms-with-tracked-vars
                  env tracked-vars dynamic)
         #_static #_(loop [static static
