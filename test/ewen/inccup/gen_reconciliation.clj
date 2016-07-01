@@ -44,6 +44,8 @@
 
   (let [children-list (gen/generate list-gen)]
 
+    #_(prn children-list)
+
     ;; Render the clojurescript component
     (utils/with-eval
       repl-env
@@ -70,6 +72,8 @@
 
   (prop/for-all
    [children-list list-gen]
+
+   #_(prn children-list)
 
    ;; Reset the key counter to 0
    (utils/with-eval
@@ -107,7 +111,7 @@
 (comment
   (require '[ewen.replique.server-cljs :refer [repl-env]])
 
-  (tc/quick-check 60 (gen/no-shrink (test-prop repl-env)))
+  (tc/quick-check 100 (gen/no-shrink (test-prop repl-env)))
 
   (ewen.inccup.incremental.vdom/update!
    ewen.inccup.gen-client/component (clojure.core/list))

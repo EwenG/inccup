@@ -146,19 +146,19 @@ from an element name."
   [element path reverse-order?]
   (let [[tag attrs content] (normalize-element element)]
     (into [(name tag) attrs]
-          (compile-seq content path reverse-order? 2))))
+          (compile-seq content path reverse-order?))))
 
 (defmethod compile-element ::literal-tag-and-literal-attributes
   [[tag attrs & content] path reverse-order?]
   (let [[tag attrs _] (normalize-element [tag attrs])]
     (into [(name tag) attrs]
-          (compile-seq content path reverse-order? 2))))
+          (compile-seq content path reverse-order?))))
 
 (defmethod compile-element ::literal-tag-and-map-attributes
   [[tag attrs & content] path reverse-order?]
   (let [[tag attrs _] (normalize-element [tag attrs])]
     (into [(name tag) (compile-attr-map attrs (conj path 1))]
-          (compile-seq content path reverse-order? 2))))
+          (compile-seq content path reverse-order?))))
 
 (defmethod compile-element ::literal-tag-and-no-attributes
   [[tag & content] path reverse-order?]
@@ -171,19 +171,20 @@ from an element name."
         [attrs-dyn-leaf first-child-dyn-leaf]
         (maybe-attr-map first-content (conj path 1)
                         (conj path 2) tag-attrs)]
-    (into [(name tag) attrs-dyn-leaf first-child-dyn-leaf]
-          (compile-seq rest-content path reverse-order? 3))))
+    (into [(name tag) attrs-dyn-leaf]
+          (compile-seq rest-content path reverse-order?
+                       first-child-dyn-leaf))))
 
 (defmethod compile-element ::literal-attributes
   [[tag attrs & rest-content] path reverse-order?]
   (into [(dynamic-tag tag (conj path 0)) attrs]
-        (compile-seq rest-content path reverse-order? 2)))
+        (compile-seq rest-content path reverse-order?)))
 
 (defmethod compile-element ::map-attributes
   [[tag attrs & rest-content] path reverse-order?]
   (into [(dynamic-tag tag (conj path 0))
          (compile-attr-map attrs (conj path 1))]
-        (compile-seq rest-content path reverse-order? 2)))
+        (compile-seq rest-content path reverse-order?)))
 
 (defmethod compile-element ::no-attributes
   [[tag & content] path reverse-order?]
@@ -196,24 +197,30 @@ from an element name."
     (let [dyn-tag-leaf (dynamic-tag tag (conj path 0))
           [attrs-dyn-leaf first-child-dyn-leaf]
           (maybe-attr-map attrs (conj path 1) (conj path 2) {})]
-      (into [dyn-tag-leaf attrs-dyn-leaf first-child-dyn-leaf]
-            (compile-seq rest-content path reverse-order? 3)))))
+      (into [dyn-tag-leaf attrs-dyn-leaf]
+            (compile-seq rest-content path reverse-order?
+                         first-child-dyn-leaf)))))
 
 (declare compile-dispatch)
+
+(defn- compile-seq* [content path reverse-order? init-seq]
+  (loop [[expr & rest-content :as content] content
+         index (if (empty? init-seq) 2 3)
+         compiled init-seq]
+    (if (not (empty? content))
+      (let [compiled-expr (compile-dispatch expr (conj path index)
+                                            reverse-order?)]
+        (recur rest-content (inc index) (conj compiled compiled-expr)))
+      compiled)))
 
 (defn- compile-seq
   "Compile a sequence of data-structures into HTML."
   ([content path reverse-order?]
-   (compile-seq content path reverse-order? 0))
-  ([content path reverse-order? index-init]
-   (loop [[expr & rest-content :as content] content
-          index index-init
-          compiled (if reverse-order? '() [])]
-     (if (not (empty? content))
-       (let [compiled-expr (compile-dispatch expr (conj path index)
-                                             reverse-order?)]
-         (recur rest-content (inc index) (conj compiled compiled-expr)))
-       compiled))))
+   (compile-seq* content path reverse-order? (if reverse-order? '() [])))
+  ([content path reverse-order? first-child]
+   (compile-seq* content path reverse-order? (if reverse-order?
+                                               (list first-child)
+                                               [first-child]))))
 
 (defn compile-dispatch
   ([expr path] (compile-dispatch expr path false))

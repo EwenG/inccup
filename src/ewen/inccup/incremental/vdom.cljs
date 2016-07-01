@@ -12,7 +12,8 @@
 
 (deftype TextVnode [^:mutable text])
 
-(deftype TagVnode [^:mutable tag])
+(deftype TagStaticAttrsVnode [^:mutable tag attrs])
+(deftype TagDynamicAttrsVnode [^:mutable tag])
 
 (deftype AttrsVnode [^:mutable attrs])
 
@@ -230,8 +231,9 @@
             (remove-comp element removed-keys)
             (when-let [key (oget element "inccup/key")]
               (goog.object/remove (oget vseq "inccup/local-keymap") key)))
-          (.removeChild parent (oget element "inccup/node"))
-          (.pop vnodes))
+          (when element
+            (.removeChild parent (oget element "inccup/node"))
+            (.pop vnodes)))
         (recur (dec index))))))
 
 (defn get-ref-node [prev-element]
@@ -287,6 +289,7 @@
           (do
             (aset vnodes index moved-comp)
             (oset (oget vseq "inccup/local-keymap") key index)
+            (oset moved-comp "inccup/parent-node" parent)
             (.insertBefore parent (oget moved-comp "inccup/node") ref-node))
           (do
             (create-comp* parent ref-node element keymap removed-keys)
@@ -295,6 +298,7 @@
       ;; Text vnode
       (let [new-node (.createTextNode js/document (.-text element))]
         (oset element "inccup/node" new-node)
+        (oset element "inccup/parent-node" parent)
         (.insertBefore parent new-node ref-node)))))
 
 #_(defn create-dynamic
@@ -343,6 +347,7 @@
         (if moved-comp
           (let [node (oget moved-comp "inccup/node")]
             (.insertBefore parent node ref-node)
+            (oset moved-comp "inccup/parent-node" parent)
             (aset prev-forms index moved-comp))
           (create-comp* parent ref-node element keymap removed-keys)))
       (instance? SeqVnode element)
@@ -354,11 +359,10 @@
                                    keymap removed-keys)
             (recur (inc i)))))
       ;;TextVnode
-      (instance? TextVnode element)
-      (.insertBefore parent (.createTextNode js/document (.-text element))
-                     ref-node)
-      ;; Other vnode types (TagVnode, AttrVnode)
-      :else nil)))
+      :else
+      (let [new-node (.createTextNode js/document (.-text element))]
+        (oset element "inccup/node" new-node)
+        (.insertBefore parent new-node ref-node)))))
 
 (declare update-comp*)
 
@@ -488,18 +492,19 @@
                     (aset vnodes @new-start-index moved-comp)
                     (update-comp* moved-comp @new-start-vnode
                                   keymap removed-keys)
+                    (oset moved-comp "inccup/parent-node" parent)
                     (.insertBefore parent
                                    (oget moved-comp "inccup/node")
                                    (oget @prev-start-vnode "inccup/node")))
                   (if (instance? Component @new-start-vnode)
-                    (let [ref-node (oget @prev-start-vnode "inccup/node")
-                          new-node (create-comp* parent ref-node
-                                                 @new-start-vnode
-                                                 keymap removed-keys)]
-                      (oset @new-start-vnode "inccup/node" new-node))
+                    (let [ref-node (oget @prev-start-vnode "inccup/node")]
+                      (create-comp* parent ref-node
+                                    @new-start-vnode
+                                    keymap removed-keys))
                     (let [new-node (.createTextNode
                                     js/document (.-text @new-start-vnode))]
                       (oset @new-start-vnode "inccup/node" new-node)
+                      (oset @new-start-vnode "inccup/parent-node" parent)
                       (.insertBefore
                        parent new-node
                        (oget @prev-start-vnode "inccup/node"))))))
@@ -528,11 +533,12 @@
         new-node (.createTextNode js/document (.-text text-vnode))
         ref-node (get-ref-node prev-element)]
     (oset text-vnode "inccup/node" new-node)
+    (oset text-vnode "inccup/parent-node" parent)
     (.insertBefore parent new-node ref-node)
     (remove-prev-element text-vnode prev-forms index removed-keys)))
 
 (defn diff-children
-  [element prev-forms index keymap removed-keys]
+  [prev-element element prev-forms index keymap removed-keys]
   (let [prev-element (aget prev-forms index)
         parent (oget prev-element "inccup/parent-node")]
     (cond
@@ -544,7 +550,8 @@
           (if-let [moved-comp (get-comp-with-key key keymap removed-keys)]
             (let [new-node (oget moved-comp "inccup/node")
                   ref-node (get-ref-node prev-element)]
-              (goog.dom/insertSiblingBefore new-node ref-node)
+              (.insertBefore parent new-node ref-node)
+              (oset moved-comp "inccup/parent-node" parent)
               (update-comp* moved-comp element keymap removed-keys)
               (remove-prev-element moved-comp prev-forms
                                    index removed-keys))
@@ -578,8 +585,9 @@
               (do
                 (loop [i 0]
                   (when (< i min-length)
-                    (let [element (aget vnodes i)]
-                      (diff-children element prev-vnodes i
+                    (let [element (aget vnodes i)
+                          prev-element (aget prev-vnodes i)]
+                      (diff-children prev-element element prev-vnodes i
                                      keymap removed-keys)
                       (when-let [key (oget element "inccup/key")]
                         (oset local-keymap key i))
@@ -603,8 +611,7 @@
                                      keymap removed-keys)
                 (aset prev-forms index vseq))))
           :else
-          (let [prev-node (oget prev-element "inccup/node")
-                parent (-> prev-node (.-parentNode))]
+          (let [prev-node (oget prev-element "inccup/node")]
             (oset vseq "inccup/local-keymap" #js {})
             (loop [i 0]
               (when (< i length)
@@ -623,47 +630,6 @@
       ;; element is a text vnode, prev-element is of different type
       (diff-dynamic-default parent element prev-element
                             prev-forms index removed-keys))))
-
-#_(defn create-comp-elements
-  "Walk the static tree of a component. Creates dom nodes during the walk.
-   Returns the created node"
-  [static forms forms-fn keymap removed-keys]
-  (let [maybe-tag (first static)
-        maybe-attrs (second static)
-        tag (if (number? maybe-tag)
-              (->> maybe-tag forms-fn name)
-              maybe-tag)
-        attrs (if (number? maybe-attrs)
-                (->> maybe-attrs forms-fn attrs->js)
-                maybe-attrs)]
-    (let [new-node (create-dom tag attrs nil)
-          l (count static)]
-      (when (number? maybe-tag)
-        (let [vtag (->TagVnode tag)]
-          (oset vtag "inccup/node" new-node)
-          (aset forms maybe-tag vtag)))
-      (when (number? maybe-attrs)
-        (let [vattrs (->AttrsVnode attrs)]
-          (oset vattrs "inccup/node" new-node)
-          (aset forms maybe-attrs vattrs)))
-      (loop [index 2]
-        (when (< index l)
-          (let [child (aget static index)]
-            (cond
-              (nil? child)
-              nil
-              (number? child)
-              (create-dynamic new-node (forms-fn child) forms
-                              child keymap removed-keys)
-              (string? child)
-              (create-dynamic new-node child forms child
-                              keymap removed-keys)
-              :else
-              (->> (create-comp-elements child forms forms-fn
-                                         keymap removed-keys)
-                   (.appendChild new-node))))
-          (recur (inc index))))
-      new-node)))
 
 (defn create-comp-element-dynamic
   [parent ref-node element prev-forms index]
@@ -698,48 +664,59 @@
 (defn create-comp-elements
   "Walk the static tree of a component. Creates dom nodes during the walk.
    Returns the created node"
-  [parent ref-node static forms forms-fn keymap removed-keys]
+  [parent ref-node static forms keymap removed-keys]
   (let [maybe-tag (first static)
         maybe-attrs (second static)
         tag (if (number? maybe-tag)
-              (->> maybe-tag forms-fn name)
+              (->> maybe-tag (aget forms) name)
               maybe-tag)
         attrs (if (number? maybe-attrs)
-                (->> maybe-attrs forms-fn attrs->js)
+                (->> maybe-attrs (aget forms) attrs->js)
                 maybe-attrs)]
-    (let [new-node (create-dom tag attrs nil)
-          l (count static)]
+    (let [vtag (cond (and (number? maybe-tag) (number? maybe-attrs))
+                     (->TagDynamicAttrsVnode tag)
+                     (number? maybe-tag)
+                     (->TagStaticAttrsVnode tag attrs)
+                     :else tag)
+          new-node (create-dom tag attrs nil)
+          l (count static)
+          dynamic-children #js []]
       (.insertBefore parent new-node ref-node)
-      (when (number? maybe-tag)
-        (let [vtag (->TagVnode tag)]
-          (oset vtag "inccup/node" new-node)
-          (oset vtag "inccup/parent-node" parent)
-          (aset forms maybe-tag vtag)))
       (when (number? maybe-attrs)
         (let [vattrs (->AttrsVnode attrs)]
           (oset vattrs "inccup/node" new-node)
-          (oset vattrs "inccup/parent-node" parent)
+          ;; We don't need to set "inccup/parent-node" for vattrs
           (aset forms maybe-attrs vattrs)))
       (loop [index 2
              ref-node nil]
         (when (< index l)
           (let [child (aget static index)
                 ref-node (cond
-                           (nil? child)
-                           ref-node
+                           (nil? child) ref-node
                            (number? child)
-                           (create-comp-element-dynamic
-                            new-node ref-node (forms-fn child)
-                            forms child)
+                           (do
+                             (.push dynamic-children child)
+                             (create-comp-element-dynamic
+                              new-node ref-node (aget forms child)
+                              forms child))
                            (string? child)
                            (.insertBefore
-                            new-node (.createTextNode js/document child)
+                            new-node
+                            (.createTextNode js/document child)
                             ref-node)
                            :else
-                           (create-comp-elements
-                            new-node nil child forms
-                            forms-fn keymap removed-keys))]
+                           (do
+                             (when (number? (aget child 0))
+                               (.push dynamic-children (aget child 0)))
+                             (create-comp-elements
+                              new-node ref-node child forms
+                              keymap removed-keys)))]
             (recur (inc index) ref-node))))
+      (when (number? maybe-tag)
+        (oset vtag "inccup/node" new-node)
+        (oset vtag "inccup/parent-node" parent)
+        (oset vtag "inccup/dynamic-children" dynamic-children)
+        (aset forms maybe-tag vtag))
       new-node)))
 
 (defn diff-attrs [node prev-attrs attrs]
@@ -761,72 +738,21 @@
                       (.removeAttribute node k))
                     (goog.object/remove prev-attrs k))))))
 
-(defn update-comp-elements
-  [comp comp-node static var-deps-arr prev-forms forms-fn
-   keymap removed-keys]
-  (cond
-    (nil? static)
-    nil
-    (string? static)
-    nil
-    (number? static)
-    ;; We just encountered a dynamic child. Diff it against the previous
-    ;; child if the params it depends on did change.
-    (when (aget var-deps-arr static)
-      (diff-children (forms-fn static) prev-forms static
-                     keymap removed-keys))
-    :else
-    (let [tag (first static)
-          dynamic-tag? (number? tag)
-          prev-tag (if dynamic-tag? (aget prev-forms tag) tag)
-          new-tag (if (and dynamic-tag? (aget var-deps-arr tag))
-                    (-> (forms-fn tag) name ->TagVnode)
-                    prev-tag)
-          attrs (second static)
-          dynamic-attrs? (number? attrs)
-          prev-attrs (if dynamic-attrs?
-                       (aget prev-forms attrs)
-                       (->AttrsVnode attrs))
-          new-attrs (if (and dynamic-attrs? (aget var-deps-arr attrs))
-                      (-> (forms-fn attrs) attrs->js ->AttrsVnode)
-                      prev-attrs)
-          l (count static)]
-      ;; If the tag did change, replace the current node by a
-      ;; node of a new type and move the children of the old node
-      ;; to the new one.
-      (cond (and dynamic-tag? (not= (.-tag prev-tag) (.-tag new-tag)))
-            (let [old-node (oget prev-tag "inccup/node")
-                  new-node (create-dom (.-tag new-tag) (.-attrs new-attrs)
-                                       (.-childNodes old-node))]
-              (oset new-tag "inccup/node" new-node)
-              (aset prev-forms tag new-tag)
-              (when dynamic-attrs?
-                (oset new-attrs "inccup/node" new-node)
-                (aset prev-forms attrs new-attrs))
-              (when (identical? comp-node old-node)
-                (oset comp "inccup/node" new-node))
-              (goog.dom/replaceNode new-node old-node))
-            ;; Update the node attributes if the params it depends on
-            ;; did change and if the node tag did not change
-            (not (identical? (.-attrs prev-attrs) (.-attrs new-attrs)))
-            (let [new-attrs (.-attrs new-attrs)]
-              (diff-attrs (oget prev-attrs "inccup/node")
-                          (.-attrs prev-attrs) new-attrs)
-              (set! (.-attrs prev-attrs) new-attrs)))
-      (loop [index 2]
-        (when (< index l)
-          (update-comp-elements comp comp-node (aget static index)
-                                var-deps-arr prev-forms forms-fn
-                                keymap removed-keys)
-          (recur (inc index)))))))
+(defn make-forms-arr [forms-fn count-dynamic]
+  (let [arr #js []]
+    (loop [index 0]
+      (when (< index count-dynamic)
+        (.push arr (forms-fn index))
+        (recur (inc index))))
+    arr))
 
 (defn create-comp* [parent ref-node comp keymap removed-keys]
   (let [id (.-id comp)
         static (.-static$ comp)
         key (oget comp "inccup/key")
         count-dynamic (.-count_dynamic comp)
-        forms (-> count-dynamic make-array)
-        var-deps-arr (-> count-dynamic make-array)]
+        forms (make-forms-arr (.-forms comp) count-dynamic)
+        var-deps-arr (make-array count-dynamic)]
     (maybe-set-global id
                       "static" static
                       "var-deps" (.-var-deps comp))
@@ -836,14 +762,17 @@
       (goog.object/set keymap key comp))
     (swap-count-global id inc)
     (let [new-node (create-comp-elements parent ref-node static
-                                         forms (.-forms comp)
-                                         keymap removed-keys)]
+                                         forms keymap removed-keys)]
       (oset comp "inccup/node" new-node)
+      (oset comp "inccup/parent-node" parent)
       (goog.array/forEach
        forms
        (fn [dyn-element index]
-         (create-dynamic dyn-element forms index
-                         keymap removed-keys))))))
+         (when (and (not (instance? TagStaticAttrsVnode dyn-element))
+                    (not (instance? TagDynamicAttrsVnode dyn-element))
+                    (not (instance? AttrsVnode dyn-element)))
+           (create-dynamic dyn-element forms index
+                           keymap removed-keys)))))))
 
 (defn update-comp* [prev-comp comp keymap removed-keys]
   (let [params (.-params comp)
@@ -854,19 +783,62 @@
                           (make-var-deps-arr
                            var-deps-arr params prev-params))
         forms-fn (.-forms comp)]
-    (update-comp-elements prev-comp (oget prev-comp "inccup/node")
-                          (.-static$ comp) var-deps-arr
-                          prev-forms forms-fn
-                          keymap removed-keys)
-    (set! (.-params prev-comp) params)))
+    (set! (.-params prev-comp) params)
+    (goog.array/forEach
+     prev-forms
+     (fn [prev-element index]
+       (when (aget var-deps-arr index)
+         (let [dyn-element (forms-fn index)]
+           (cond (or (instance? TagStaticAttrsVnode prev-element)
+                     (instance? TagDynamicAttrsVnode prev-element))
+                 (let [tag (name dyn-element)]
+                   (when (not= (.-tag prev-element) tag)
+                     (let [prev-attrs (if (instance? TagStaticAttrsVnode
+                                                     prev-element)
+                                        prev-element
+                                        (aget prev-forms (inc index)))
+                           attrs (.-attrs prev-attrs)
+                           prev-node (oget prev-element "inccup/node")
+                           new-node (create-dom
+                                     tag attrs (.-childNodes prev-node))
+                           dynamic-children
+                           (oget prev-element "inccup/dynamic-children")]
+                       (set! (.-tag prev-element) tag)
+                       (oset prev-element "inccup/node" new-node)
+                       (when (instance? TagDynamicAttrsVnode prev-element)
+                         (oset prev-attrs "inccup/node" new-node))
+                       ;; Update the parent node of all dynamic children
+                       ;; of this element
+                       (goog.array/forEach
+                        dynamic-children
+                        (fn [x]
+                          (oset (aget prev-forms x)
+                                "inccup/parent-node" new-node)))
+                       ;; prev-node is the top level node of the comp.
+                       ;; Its tag can be dynamic like any other tag which
+                       ;; means the node may have changed. In such a case,
+                       ;; we update the component node to the new one
+                       (when (identical?
+                              prev-node (oget prev-comp "inccup/node"))
+                         (oset prev-comp "inccup/node" new-node))
+                       (.replaceChild (oget prev-element
+                                            "inccup/parent-node")
+                                      new-node prev-node))))
+                 (instance? AttrsVnode prev-element)
+                 (let [new-attrs (-> (forms-fn index) attrs->js)]
+                   (diff-attrs (oget prev-element "inccup/node")
+                               (.-attrs prev-element)
+                               new-attrs)
+                   (set! (.-attrs prev-element) new-attrs))
+                 :else
+                 (diff-children prev-element dyn-element prev-forms index
+                                keymap removed-keys))))))))
 
 (defn render! [node comp-fn & params]
   (goog.dom/removeChildren node)
   (binding [*globals* #js {:keymap #js {}}]
-    (let [comp (apply comp-fn params)
-          new-node (create-comp*
-                    node nil comp
-                    (goog.object/get *globals* "keymap") nil)]
+    (let [comp (apply comp-fn params)]
+      (create-comp* node nil comp (goog.object/get *globals* "keymap") nil)
       (oset comp "inccup/globals" *globals*)
       (oset comp "inccup/comp-fn" comp-fn)
       comp)))

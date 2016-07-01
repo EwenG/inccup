@@ -257,6 +257,8 @@
             l 4]
        (when (< i l)
          (let [tag-vals (map #(get % i) tag-vals)
+               attr-vals (map #(get % i) attr-vals)
+               attr-keys-vals (map #(get % i) attr-keys-vals)
                attr-vals-vals (map #(get % i) attr-vals-vals)
                ;; Update the clojure string with the new params
                string-clj (-> `(apply (fn [~@tag-syms ~@attr-syms
@@ -269,26 +271,37 @@
                                        ~@attr-vals-vals])
                               eval str)]
 
-         ;; Update the clojurescript component
-         (with-eval
-           repl-env
-           (utils/cljs-test-quote
-            (vdom/update! gen-client/component
-                          ~@tag-vals
-                          ~@attr-vals
-                          ~@attr-keys-vals
-                          ~@attr-vals-vals)))
+           #_(prn (utils/cljs-test-quote
+                 (vdom/update! gen-client/component
+                               ~@tag-vals
+                               ~@attr-vals
+                               ~@attr-keys-vals
+                               ~@attr-vals-vals)))
 
-         ;; Check that the clojure generated string is equal to the
-         ;; rendered component
-         (let [string-inc (with-eval
-                            repl-env
-                            (utils/cljs-test-quote
-                             (utils/node-to-string (utils/root))))]
-           (is (= (xml/parse (java.io.StringReader. string-clj))
-                  (xml/parse (java.io.StringReader. string-inc)))))
+           ;; Update the clojurescript component
+           (with-eval
+             repl-env
+             (utils/cljs-test-quote
+              (vdom/update! gen-client/component
+                            ~@tag-vals
+                            ~@attr-vals
+                            ~@attr-keys-vals
+                            ~@attr-vals-vals)))
 
-         (recur (inc i) l))))
+           ;; Check that the clojure generated string is equal to the
+           ;; rendered component
+           (let [string-inc (with-eval
+                              repl-env
+                              (utils/cljs-test-quote
+                               (utils/node-to-string (utils/root))))]
+             #_(when (not= (xml/parse (java.io.StringReader. string-clj))
+                         (xml/parse (java.io.StringReader. string-inc)))
+               (prn form)
+               (prn string-inc)
+               (prn string-clj))
+             (is (= (xml/parse (java.io.StringReader. string-clj))
+                    (xml/parse (java.io.StringReader. string-inc)))))
+           (recur (inc i) l))))
 
      true)))
 
@@ -306,5 +319,5 @@
 
   (require '[ewen.replique.server-cljs :refer [repl-env]])
 
-  (tc/quick-check 30 (gen/no-shrink (make-valid-form-prop repl-env)))
+  (tc/quick-check 100 (gen/no-shrink (make-valid-form-prop repl-env)))
   )
