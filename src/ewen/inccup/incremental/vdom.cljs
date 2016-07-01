@@ -10,13 +10,27 @@
 (deftype Component [id static ^:mutable params
                     var-deps forms count-dynamic])
 
-(deftype TextVnode [^:mutable text])
+;; Dynamic virtual nodes / tags / attributes are reified into their
+;; corresponding deftype, partly because it make dispatching on their type
+;; a bit easier to read, partly because it let us the possibility to
+;; refactor the code using polymorphism later and partly because it let us
+;; store metadata into the Vnode object properties such as the real dom
+;; node associated with the virtual node, its parent, the virtual node
+;; key ...
+;; In particular, TextVnode would otherwise have been modeled as strings,
+;; but strings can't be attached properties.
+;; Dynamic tags are splitted between dynamic tags with static attributes
+;; and dynamic tags with dynamic attributes. The reason is when a tag is
+;; changed, its real dom node must be recreated as well as its attributes.
+;; When the attributes are dynamic, special care must be taken because the
+;; attributes may not have changed, attributes may have changed at the
+;; same time than the tag or the attributes may even not be attributes
+;; anymore but may now represent the first child of the node.
 
+(deftype TextVnode [^:mutable text])
 (deftype TagStaticAttrsVnode [^:mutable tag attrs])
 (deftype TagDynamicAttrsVnode [^:mutable tag])
-
 (deftype AttrsVnode [^:mutable attrs])
-
 (deftype SeqVnode [vnodes])
 
 (defn into-vnodes [vnodes x]
@@ -300,40 +314,6 @@
         (oset element "inccup/node" new-node)
         (oset element "inccup/parent-node" parent)
         (.insertBefore parent new-node ref-node)))))
-
-#_(defn create-dynamic
-  [parent element prev-forms index keymap removed-keys]
-  (cond
-    (instance? Component element)
-    (let [key (oget element "inccup/key")
-          moved-comp (when key
-                       (get-comp-with-key key keymap removed-keys))]
-      (if moved-comp
-        (let [node (oget moved-comp "inccup/node")]
-          (.appendChild parent node)
-          (aset prev-forms index moved-comp))
-        (let [node (create-comp* element keymap removed-keys)]
-          (.appendChild parent node)
-          (oset element "inccup/node" node)
-          (aset prev-forms index element))))
-    (seq? element)
-    (let [vseq (seq->vseq element)
-          vnodes (.-vnodes vseq)
-          length (.-length vnodes)]
-      (if (> length 0)
-        (do
-          (oset vseq "inccup/local-keymap" #js {})
-          (loop [i 0]
-            (when (< i length)
-              (create-dynamic-in-seq parent nil vseq vnodes i
-                                     keymap removed-keys)
-              (recur (inc i))))
-          (oset vseq "inccup/parent-node" parent)
-          (aset prev-forms index vseq))
-        ;; Empty seqs are considered as empty strings,
-        ;; otherwise they don't get any real node attached
-        (create-dynamic-text parent "" prev-forms index)))
-    :else (create-dynamic-text parent element prev-forms index)))
 
 (defn create-dynamic
   [element prev-forms index keymap removed-keys]
@@ -662,9 +642,28 @@
   ref-node)
 
 (defn create-comp-elements
-  "Walk the static tree of a component. Creates dom nodes during the walk.
-   Returns the created node"
-  [parent ref-node static forms keymap removed-keys]
+  "Walk the static tree of a component. Create dom nodes for static nodes
+  and nodes with a dynamic tag but not dynamic children. All dynamic
+  elements: dynamic tags, dynamic attrs and dynamic children are converted
+  to their corresponding Vnode type. All Vnodes are also attached with
+  their next real dom node and parent dom node. This is in order to be able
+  to create the real dom nodes of the Vnodes later, using insertBefore.
+  Real dom nodes of Vnodes are created later (after this function has
+  returned) in order to clear the call stack after the (recursive) walk of
+  the static tree. Clearing the call stack may not be necessary but I
+  simply don't want to test its necessity or not. This way I don't have to
+  care.
+  The list of children of every node is in reverse order. This allows us to
+  create real dom nodes before walking previous nodes, and thus being able
+  to keep track of the next real dom node of every Vnode. If, otherwise, we
+  would have walked the children in order, then it would have been easier
+  to keep track of the previous reald dom node of each Vnode, but the DOM
+  API does not have an insertAfter method.
+  Created dom nodes are attached to the live dom as we go. We could have
+  just returned the created dom node and let the calling function attach
+  the node to the live DOM, but I read this way of doing is faster,
+  although I did not benchmark it. Thus it may change in the future."
+  [parent ref-node static forms]
   (let [maybe-tag (first static)
         maybe-attrs (second static)
         tag (if (number? maybe-tag)
@@ -680,12 +679,19 @@
                      :else tag)
           new-node (create-dom tag attrs nil)
           l (count static)
+          ;; When a tag is dynamic, we keep track of its dynamic children
+          ;; (including children whith a dynamic tag, but excluding
+          ;; children whith a static tag and dynamic attrs) in order to be
+          ;; able to update the parent real dom node of child virtual nodes
+          ;; when the dynamic tag is changed. Children with dynamic
+          ;; attributes only are not kept track of because we don't need
+          ;; the parent reald dom node to update the attributes
           dynamic-children #js []]
       (.insertBefore parent new-node ref-node)
       (when (number? maybe-attrs)
         (let [vattrs (->AttrsVnode attrs)]
           (oset vattrs "inccup/node" new-node)
-          ;; We don't need to set "inccup/parent-node" for vattrs
+          ;; We don't need to set the parent real dom node for vattrs
           (aset forms maybe-attrs vattrs)))
       (loop [index 2
              ref-node nil]
@@ -709,8 +715,7 @@
                              (when (number? (aget child 0))
                                (.push dynamic-children (aget child 0)))
                              (create-comp-elements
-                              new-node ref-node child forms
-                              keymap removed-keys)))]
+                              new-node ref-node child forms)))]
             (recur (inc index) ref-node))))
       (when (number? maybe-tag)
         (oset vtag "inccup/node" new-node)
@@ -748,26 +753,27 @@
 
 (defn create-comp* [parent ref-node comp keymap removed-keys]
   (let [id (.-id comp)
+        ;; I don't know why but static need a dollar to work. Static is
+        ;; probably a reserved property name or something
         static (.-static$ comp)
         key (oget comp "inccup/key")
-        count-dynamic (.-count_dynamic comp)
-        forms (make-forms-arr (.-forms comp) count-dynamic)
-        var-deps-arr (make-array count-dynamic)]
+        forms (make-forms-arr (.-forms comp) (.-count_dynamic comp))]
     (maybe-set-global id
                       "static" static
                       "var-deps" (.-var-deps comp))
     (oset comp "inccup/forms" forms)
-    (oset comp "inccup/var-deps-arr" var-deps-arr)
+    (oset comp "inccup/var-deps-arr" #js [])
     (when key
       (goog.object/set keymap key comp))
     (swap-count-global id inc)
-    (let [new-node (create-comp-elements parent ref-node static
-                                         forms keymap removed-keys)]
+    (let [new-node (create-comp-elements parent ref-node static forms)]
       (oset comp "inccup/node" new-node)
       (oset comp "inccup/parent-node" parent)
       (goog.array/forEach
        forms
        (fn [dyn-element index]
+         ;; Nodes with a dynamic tag and/or dynamic attributes already have
+         ;; been created during the walk of the static tree
          (when (and (not (instance? TagStaticAttrsVnode dyn-element))
                     (not (instance? TagDynamicAttrsVnode dyn-element))
                     (not (instance? AttrsVnode dyn-element)))
