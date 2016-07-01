@@ -74,35 +74,6 @@
   (goog.object/set comp "inccup/key" (str (.-id comp) key))
   comp)
 
-(defn tree-with-parents [tree]
-  (goog.array/forEach
-   tree (fn [item index _]
-          (when (array? item)
-            (goog.object/set item "inccup/parent" tree)
-            (goog.object/set item "inccup/index-in-parent" (inc index))
-            (tree-with-parents item))))
-  tree)
-
-(comment
-  (let [root (tree-with-parents #js [#js ["p" {} 3
-                                          #js ["div" {} #js ["p2" {}]]
-                                          "t"
-                                          #js ["p3" {}]]])]
-    (loop [current (aget root 0)
-           index 2]
-      (prn (aget current index))
-      (cond
-        (identical? root current)
-        nil
-        (>= index (.-length current))
-        (recur (goog.object/get current "inccup/parent")
-               (goog.object/get current "inccup/index-in-parent"))
-        (array? (aget current index))
-        (recur (aget current index) 2)
-        :else
-        (recur current (inc index)))))
-  )
-
 (defn attrs->js [attrs]
   (let [attrs-js (js-obj)
         attr-keys (keys attrs)]
