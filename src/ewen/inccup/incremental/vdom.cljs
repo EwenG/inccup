@@ -85,15 +85,6 @@
           (recur (rest attr-keys)))
         attrs-js))))
 
-(defn identical-params? [prev-params params deps-indexes]
-  (loop [index 0]
-    (if-let [deps-index (aget deps-indexes index)]
-      (if (identical? (aget prev-params deps-index)
-                      (aget params deps-index))
-        (recur (inc index))
-        false)
-      true)))
-
 (defn attr-as-prop [attr]
   (case attr
     "class" "className"
@@ -149,13 +140,34 @@
       (->> (oget comp-globals "count") inc-dec
            (oset comp-globals "count")))))
 
+(defn identical-vars? [prev-params params var-indexes]
+  (loop [index 0]
+    (if-let [var-index (aget var-indexes index)]
+      (if (identical? (aget prev-params var-index)
+                      (aget params var-index))
+        (recur (inc index))
+        false)
+      true)))
+
+(defn identical-atoms? [prev-params params atom-indexes]
+  (loop [index 0]
+    (if-let [atom-index (aget atom-indexes index)]
+      (if (identical? (deref (aget prev-params atom-index))
+                      (deref (aget params atom-index)))
+        (recur (inc index))
+        false)
+      true)))
+
 (defn make-var-deps-arr [arr params prev-params var-deps]
   (loop [index 0]
-    (when-let [indexes (aget var-deps index)]
-      (if (identical-params? prev-params params indexes)
-        (aset arr index false)
-        (aset arr index true))
-      (recur (inc index))))
+    (if-let [deps-indexes (aget var-deps index)]
+      (let [var-indexes (aget deps-indexes 0)
+            atom-indexes (aget deps-indexes 1)]
+        (if (and (identical-vars? prev-params params var-indexes)
+                 (identical-atoms? prev-params params atom-indexes))
+          (aset arr index false)
+          (aset arr index true))
+        (recur (inc index)))))
   arr)
 
 (defn remove-comp* [comp key removed-keys]
@@ -722,18 +734,27 @@
         (recur (inc index))))
     arr))
 
+(defn make-false-arr [count-dynamic]
+  (let [arr #js []]
+    (loop [index 0]
+      (when (< index count-dynamic)
+        (.push arr false)
+        (recur (inc index))))
+    arr))
+
 (defn create-comp* [parent ref-node comp keymap removed-keys]
   (let [id (.-id comp)
         ;; I don't know why but static need a dollar to work. Static is
         ;; probably a reserved property name or something
         static (.-static$ comp)
         key (oget comp "inccup/key")
-        forms (make-forms-arr (.-forms comp) (.-count_dynamic comp))]
+        count-dynamic (.-count_dynamic comp)
+        forms (make-forms-arr (.-forms comp) count-dynamic)]
     (maybe-set-global id
                       "static" static
                       "var-deps" (.-var-deps comp))
     (oset comp "inccup/forms" forms)
-    (oset comp "inccup/var-deps-arr" #js [])
+    (oset comp "inccup/var-deps-arr" (make-false-arr count-dynamic))
     (when key
       (goog.object/set keymap key comp))
     (swap-count-global id inc)

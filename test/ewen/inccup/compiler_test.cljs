@@ -50,7 +50,7 @@
 
 (multi-defn list1* [x] (h [:p#ii.cc {:e x :class x} x "4"]))
 (multi-defn list1 [x z] (h [:p {} (count x) (h [:p z])
-                            (for [y x] (list1* y))]))
+                              (for [y x] (list1* y))]))
 
 (comment
   (def cc (render! (new-root) list1 (list 1 2) nil))

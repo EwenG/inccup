@@ -9,14 +9,49 @@
             [clojure.tools.reader :as reader])
   (:import [ewen.inccup.common.compiler DynamicLeaf]))
 
-(def ^:dynamic *tracked-vars* nil)
+(def ^:dynamic *component-locals* nil)
+(def ^:dynamic *dynamic-expr-vars* nil)
 (defonce component-id (atom 0))
 
-(defn track-vars [env tracked-vars expr]
-  (binding [*tracked-vars* tracked-vars]
+(defn collect-input-var-deps
+  ([collected-vars analyzed-var]
+   (collect-input-var-deps nil collected-vars analyzed-var))
+  ([component-locals collected-vars
+    {name :name fn-var :fn-var
+     local :local init :init
+     op :op tag :tag
+     :as info}]
+   (cond
+     (and (= :var op)
+          (not local)
+          (not fn-var)
+          (or (nil? component-locals)
+              (contains? component-locals name))
+          (or (nil? component-locals)
+              (identical? info (get-in component-locals [name :info]))))
+     (assoc collected-vars name {:atom? false :info info})
+     ;; The analyzed var is a local var with an initial binding. The
+     ;; initial binding may itself depend on a function parameter,
+     ;; thus we recurse on the initial binding
+     (and (= :var op) local init)
+     (if (not (empty? (:children init)))
+       ;; If init has children, then it is a complex expression, by
+       ;; opposition to a single var or local binding. Recurse on every
+       ;; child in order to analyze each expression individually
+       (->> (:children init)
+            (mapv :info)
+            (mapv (partial collect-input-var-deps
+                           component-locals collected-vars))
+            (apply merge))
+       (collect-input-var-deps component-locals collected-vars
+                               (:info init)))
+     :else collected-vars)))
+
+(defn track-vars [env component-locals expr]
+  (binding [*component-locals* component-locals
+            *dynamic-expr-vars* #{}]
     (let [cljs-expanded (-> env (ana-api/analyze expr) emitter/emit*)
-          used-vars (keep #(when (:is-used %) (:symbol %))
-                          (vals *tracked-vars*))]
+          used-vars *dynamic-expr-vars*]
       [cljs-expanded (set used-vars)])))
 
 (declare compile-html)
@@ -36,47 +71,43 @@
     :else (str x)))
 
 (defn dynamic-form-with-tracked-vars
-  [env tracked-vars {:keys [original-form] :as dynamic-form}]
-  (let [[expr used-vars] (track-vars env tracked-vars original-form)]
+  [env component-locals {:keys [original-form] :as dynamic-form}]
+  (let [[expr used-vars] (track-vars env component-locals original-form)]
     (assoc dynamic-form :var-deps used-vars)))
 
-(defn dynamic-forms-with-tracked-vars [env tracked-vars dynamic]
-  (into [] (map (partial dynamic-form-with-tracked-vars env tracked-vars))
+(defn dynamic-forms-with-tracked-vars [env component-locals dynamic]
+  (into []
+        (map (partial dynamic-form-with-tracked-vars env component-locals))
         dynamic))
-
-(defn var-deps->indexes [params var-deps]
-  (map #(.indexOf params %) var-deps))
 
 (defn indexed-identity [index form]
   [index form])
 
+(defn var-deps->indexes [tracked-vars var-deps]
+  (let [{var-deps false atom-deps true} (group-by :atom? var-deps)]
+    [(map #(.indexOf tracked-vars %) var-deps)
+     (map #(.indexOf tracked-vars %) atom-deps)]))
+
 (defn component [env forms]
-  (let [params (->> (:locals env)
-                    (filter (comp not :local second))
-                    (filter (comp not :fn-var second)))
-        tracked-vars (loop [tracked-vars {}
-                            params params]
-                       (if-let [[param-name param-env] (first params)]
-                         (recur (assoc tracked-vars param-name
-                                       {:env param-env
-                                        :is-used false
-                                        :symbol param-name})
-                                (rest params))
-                         tracked-vars))
+  (let [component-locals (loop [component-locals {}
+                                locals (:locals env)]
+                           (if-let [local (first locals)]
+                             (recur (->> (second local)
+                                         (collect-input-var-deps {})
+                                         (merge component-locals))
+                                    (rest locals))
+                             component-locals))
         [static dynamic]
         (binding [c-comp/*dynamic-forms* []]
           [(c-comp/compile-dispatch forms [] true)
            c-comp/*dynamic-forms*])
         dynamic (dynamic-forms-with-tracked-vars
-                 env tracked-vars dynamic)
-        #_static #_(loop [static static
-                      dynamic dynamic]
-                 (if-let [update-path (first dynamic)]
-                   (recur (static-with-metas static update-path)
-                          (rest dynamic))
-                   static))
+                 env component-locals dynamic)
+        tracked-vars (->> (map :var-deps dynamic)
+                          (apply union)
+                          (into []))
         static (c-comp/walk-static identity literal->js static)
-        var-deps->indexes (partial var-deps->indexes (keys tracked-vars))
+        var-deps->indexes (partial var-deps->indexes tracked-vars)
         id (swap! component-id inc)]
     `(ewen.inccup.incremental.vdom/->Component
       ~id
@@ -85,7 +116,7 @@
         (goog.object/get
          ewen.inccup.incremental.vdom/*globals* ~id nil) "static")
        ~static)
-      ~(c-comp/coll->js-array (keys tracked-vars))
+      ~(c-comp/coll->js-array (map :name tracked-vars))
       (cljs.core/or
        (goog.object/get
         (goog.object/get
@@ -101,38 +132,20 @@
                  (apply concat))))
       ~(count dynamic))))
 
-(defn collect-input-var-deps
-  [tracked-vars collected-vars
-   {:keys [op local init info env children] :as ast}]
-  (let [name (:name info)]
-    (cond
-      (and (= :var op)
-           (contains? tracked-vars name)
-           (identical? (get (:locals env) name)
-                       (get-in tracked-vars [name :env])))
-      (conj collected-vars ast)
-      (and (= :var op) local init)
-      (collect-input-var-deps tracked-vars collected-vars init)
-      (not (empty? children))
-      (->> (map (partial collect-input-var-deps
-                         tracked-vars collected-vars)
-                children)
-           (apply union))
-      :else collected-vars)))
-
 (defmethod emitter/emit* :var
   [{:keys [info env form] :as ast}]
-  (let [used-vars (collect-input-var-deps *tracked-vars* #{} ast)]
-    (doseq [{{name :name} :info} used-vars]
-      (set! *tracked-vars*
-            (assoc-in *tracked-vars* [name :is-used] true))))
+  (let [used-vars (collect-input-var-deps
+                   *component-locals* {} info)]
+    (doseq [[name {:keys [atom?]}] used-vars]
+      (set! *dynamic-expr-vars*
+            (conj *dynamic-expr-vars* {:name name :atom? atom?}))))
   (emitter/var-emit ast))
 
 
 (comment
-  (binding [*tracked-vars* {'e false}]
+  (binding [*component-locals* {'e false}]
     (emit* (ana-api/analyze (ana-api/empty-env)
                             '(let [e "e"]
                                e)))
-    *tracked-vars*)
+    *component-locals*)
   )
