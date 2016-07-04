@@ -6,6 +6,13 @@
             [goog.dom]))
 
 (def ^:dynamic *globals* nil)
+(def ^:dynamic *inside-render-loop* false)
+(def ^:dynamic *render-queue* nil)
+
+(defonce watch-counter (atom 0))
+
+(def ^:dynamic *state* nil)
+(def ^:dynamic *component* nil)
 
 (deftype Component [id static ^:mutable params
                     var-deps forms count-dynamic])
@@ -140,34 +147,22 @@
       (->> (oget comp-globals "count") inc-dec
            (oset comp-globals "count")))))
 
-(defn identical-vars? [prev-params params var-indexes]
+(defn identical-params? [prev-params params params-indexes]
   (loop [index 0]
-    (if-let [var-index (aget var-indexes index)]
-      (if (identical? (aget prev-params var-index)
-                      (aget params var-index))
-        (recur (inc index))
-        false)
-      true)))
-
-(defn identical-atoms? [prev-params params atom-indexes]
-  (loop [index 0]
-    (if-let [atom-index (aget atom-indexes index)]
-      (if (identical? (deref (aget prev-params atom-index))
-                      (deref (aget params atom-index)))
+    (if-let [params-index (aget params-indexes index)]
+      (if (identical? (aget prev-params params-index)
+                      (aget params params-index))
         (recur (inc index))
         false)
       true)))
 
 (defn make-var-deps-arr [arr params prev-params var-deps]
   (loop [index 0]
-    (if-let [deps-indexes (aget var-deps index)]
-      (let [var-indexes (aget deps-indexes 0)
-            atom-indexes (aget deps-indexes 1)]
-        (if (and (identical-vars? prev-params params var-indexes)
-                 (identical-atoms? prev-params params atom-indexes))
-          (aset arr index false)
-          (aset arr index true))
-        (recur (inc index)))))
+    (when-let [deps-indexes (aget var-deps index)]
+      (if (identical-params? prev-params params deps-indexes)
+        (aset arr index false)
+        (aset arr index true))
+      (recur (inc index))))
   arr)
 
 (defn remove-comp* [comp key removed-keys]
@@ -214,7 +209,8 @@
          (swap-count-global id dec)
          (when (= 0 (-> (oget *globals* id) (oget "count")))
            (goog.object/remove *globals* id)))
-       (goog.object/remove keymap key)))))
+       (goog.object/remove keymap key)
+       (goog.object/remove removed-keys key)))))
 
 (defn pop-vseq-from-to
   [vseq start-index end-index removed-keys]
@@ -412,8 +408,8 @@
                             keymap removed-keys)
               (aset vnodes @new-end-index @prev-start-vnode)
               (.insertBefore parent
-               (oget @prev-start-vnode "inccup/node")
-               (.-nextSibling (oget @prev-end-vnode "inccup/node")))
+                             (oget @prev-start-vnode "inccup/node")
+                             (.-nextSibling (oget @prev-end-vnode "inccup/node")))
               (oset local-keymap @new-end-key @new-end-index)
               (inc-or-dec-vnode prev-start-vnode prev-start-index
                                 prev-start-key prev-vnodes inc)
@@ -427,8 +423,8 @@
                             keymap removed-keys)
               (aset vnodes @new-start-index @prev-end-vnode)
               (.insertBefore parent
-               (oget @prev-end-vnode "inccup/node")
-               (oget @prev-start-vnode "inccup/node"))
+                             (oget @prev-end-vnode "inccup/node")
+                             (oget @prev-start-vnode "inccup/node"))
               (oset local-keymap @new-start-key @new-start-index)
               (inc-or-dec-vnode prev-end-vnode prev-end-index
                                 prev-end-key prev-vnodes dec)
@@ -742,22 +738,55 @@
         (recur (inc index))))
     arr))
 
+(defn process-render-queue [render-queue keymap removed-keys]
+  (loop [comp (.pop render-queue)
+         state (.pop render-queue)]
+    (when comp
+      (let [params (.-params comp)]
+        (set! *component* comp)
+        (set! *state* state)
+        (aset params 0 state)
+        (update-comp* comp comp keymap removed-keys)
+        (clean-removed-keys keymap removed-keys))
+      (recur (.pop render-queue) (.pop render-queue)))))
+
 (defn create-comp* [parent ref-node comp keymap removed-keys]
   (let [id (.-id comp)
+        globals *globals*
+        render-queue *render-queue*
         ;; I don't know why but static need a dollar to work. Static is
         ;; probably a reserved property name or something
         static (.-static$ comp)
         key (oget comp "inccup/key")
         count-dynamic (.-count_dynamic comp)
-        forms (make-forms-arr (.-forms comp) count-dynamic)]
+        forms (make-forms-arr (.-forms comp) count-dynamic)
+        local-state (atom nil)]
     (maybe-set-global id
                       "static" static
                       "var-deps" (.-var-deps comp))
     (oset comp "inccup/forms" forms)
     (oset comp "inccup/var-deps-arr" (make-false-arr count-dynamic))
+    (oset comp "inccup/local-state" local-state)
+    #_(add-watch local-state
+               (swap! watch-counter inc)
+               (fn [k r o n]
+                 (assert (not *inside-render-loop*))
+                 (aset (.-params comp) 0 n)
+                 (binding [*globals* globals
+                           *state* n
+                           *component* comp
+                           *inside-render-loop* true
+                           *render-queue* render-queue]
+                   (update-comp* comp comp keymap removed-keys)
+                   (clean-removed-keys keymap removed-keys)
+                   (process-render-queue render-queue
+                                         keymap removed-keys)
+                   (assert (goog.object/isEmpty removed-keys)))))
     (when key
       (goog.object/set keymap key comp))
     (swap-count-global id inc)
+    (set! *state* @local-state)
+    (set! *component* comp)
     (let [new-node (create-comp-elements parent ref-node static forms)]
       (oset comp "inccup/node" new-node)
       (oset comp "inccup/parent-node" parent)
@@ -770,7 +799,8 @@
                     (not (instance? TagDynamicAttrsVnode dyn-element))
                     (not (instance? AttrsVnode dyn-element)))
            (create-dynamic dyn-element forms index
-                           keymap removed-keys)))))))
+                           keymap removed-keys)))))
+    (oset comp "inccup/mounted" true)))
 
 (defn update-comp* [prev-comp comp keymap removed-keys]
   (let [params (.-params comp)
@@ -782,6 +812,8 @@
                            var-deps-arr params prev-params))
         forms-fn (.-forms comp)]
     (set! (.-params prev-comp) params)
+    (set! *state* (oget prev-comp "inccup/local-state"))
+    (set! *component* prev-comp)
     (goog.array/forEach
      prev-forms
      (fn [prev-element index]
@@ -834,24 +866,43 @@
 
 (defn render! [node comp-fn & params]
   (goog.dom/removeChildren node)
-  (binding [*globals* #js {:keymap #js {}}]
-    (let [comp (apply comp-fn params)]
-      (create-comp* node nil comp (goog.object/get *globals* "keymap") nil)
+  (let [comp (apply comp-fn params)
+        keymap #js {}
+        removed-keys #js {}]
+    (binding [*globals* #js {}
+              *state* nil
+              *component* comp
+              *inside-render-loop* true
+              *render-queue* #js []]
       (oset comp "inccup/globals" *globals*)
       (oset comp "inccup/comp-fn" comp-fn)
+      (oset comp "inccup/keymap" keymap)
+      (oset comp "inccup/removed-keys" removed-keys)
+      (oset comp "inccup/render-queue" *render-queue*)
+      (create-comp* node nil comp keymap removed-keys)
+      (process-render-queue *render-queue* keymap removed-keys)
+      (assert (goog.object/isEmpty removed-keys))
       comp)))
 
 (defn update! [prev-comp & params]
   (binding [*globals* (oget prev-comp "inccup/globals")]
-    (assert (not (nil? *globals*)))
-    (let [comp-fn (oget prev-comp "inccup/comp-fn")
+    (let [_ (assert (not (nil? *globals*)))
+          comp-fn (oget prev-comp "inccup/comp-fn")
           _ (assert (fn? comp-fn))
-          comp (apply comp-fn params)
-          keymap (goog.object/get *globals* "keymap")
-          removed-keys #js {}]
+          keymap (oget prev-comp "inccup/keymap")
+          render-queue (oget prev-comp "inccup/render-queue")
+          _ (assert (= 0 (.-length render-queue)))
+          removed-keys (oget prev-comp "inccup/removed-keys")
+          comp (apply comp-fn params)]
       (assert (= (.-id comp) (.-id prev-comp)))
-      (update-comp* prev-comp comp keymap removed-keys)
-      (clean-removed-keys keymap removed-keys)
+      (binding [*state* (oget comp "inccup/local-state")
+                *component* comp
+                *inside-render-loop* true
+                *render-queue* render-queue]
+        (update-comp* prev-comp comp keymap removed-keys)
+        (clean-removed-keys keymap removed-keys)
+        (process-render-queue render-queue keymap removed-keys))
+      (assert (goog.object/isEmpty removed-keys))
       #_(.log js/console keymap)
       #_(.log js/console removed-keys)
       prev-comp)))

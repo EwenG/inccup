@@ -29,6 +29,11 @@
   )
 
 (comment
+  (let [comp (render! (new-root) simple2 :p {:e "e"} "t")]
+    (update! comp :p {:class "c2"} "t"))
+  )
+
+(comment
   (let [comp (render! (new-root) simple4)]
     (.-innerHTML (root))
     #_(str (comp-fn-string))

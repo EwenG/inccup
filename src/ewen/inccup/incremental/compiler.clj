@@ -29,7 +29,7 @@
               (contains? component-locals name))
           (or (nil? component-locals)
               (identical? info (get-in component-locals [name :info]))))
-     (assoc collected-vars name {:atom? false :info info})
+     (assoc collected-vars name {:info info})
      ;; The analyzed var is a local var with an initial binding. The
      ;; initial binding may itself depend on a function parameter,
      ;; thus we recurse on the initial binding
@@ -84,9 +84,7 @@
   [index form])
 
 (defn var-deps->indexes [tracked-vars var-deps]
-  (let [{var-deps false atom-deps true} (group-by :atom? var-deps)]
-    [(map #(.indexOf tracked-vars %) var-deps)
-     (map #(.indexOf tracked-vars %) atom-deps)]))
+  (map #(.indexOf tracked-vars %) var-deps))
 
 (defn component [env forms]
   (let [component-locals (loop [component-locals {}
@@ -138,7 +136,7 @@
                    *component-locals* {} info)]
     (doseq [[name {:keys [atom?]}] used-vars]
       (set! *dynamic-expr-vars*
-            (conj *dynamic-expr-vars* {:name name :atom? atom?}))))
+            (conj *dynamic-expr-vars* {:name name}))))
   (emitter/var-emit ast))
 
 
