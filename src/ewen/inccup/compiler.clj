@@ -74,7 +74,7 @@
 (defn compile-dispatch-clj
   ([forms]
    (compile-dispatch-clj forms {::output-mode *clj-output-mode*}))
-  ([forms {:keys [::output-mode] :or {::output-mode *clj-output-mode*}}]
+  ([forms {:keys [::output-mode] :or {output-mode *clj-output-mode*}}]
    {:pre [(vector? forms)
           (spec/valid? ::string-output-mode output-mode)]}
    `(binding [c-runtime/*attrs-or-first-child* nil]
